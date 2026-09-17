@@ -1,0 +1,15 @@
+# Pico SDK / CMake build output
+build/
+cmake-build-*/
+*.uf2
+*.elf
+*.bin
+*.hex
+*.dis
+*.map
+
+# SDK import shim (copy from your local pico-sdk install)
+# pico_sdk_import.cmake
+
+# macOS
+.DS_Store
