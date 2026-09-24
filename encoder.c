@@ -44,6 +44,7 @@
 //
 #define ENC_A 14
 #define ENC_B 15
+#define IRQ_SIG 13
 #define TRANSITIONS_PER_CLICK 4
 
 #define BOTH_SHORTED  0
@@ -122,9 +123,13 @@ void init_dma_chirp(void) {
 
 volatile int encoder_count = 0;
 
+int irq_state = 1;
 
 void gpio_callback(uint gpio, uint32_t event_mask) {
-    encoder_count = gpio_get(ENC_B) ? encoder_count + 1 : encoder_count - 1;
+    irq_state = !irq_state;
+    int enc_b_read = gpio_get(ENC_B);
+    gpio_put(IRQ_SIG, enc_b_read);
+    encoder_count = (enc_b_read) ? encoder_count + 1 : encoder_count - 1;
 }
 
 typedef signed int fix15;
@@ -283,7 +288,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         setTextColor(WHITE);
         setTextSize(3);
         setCursor(80, 40);
-        sprintf(buf, "%d", encoder_count / TRANSITIONS_PER_CLICK);
+        sprintf(buf, "%d", encoder_count);
         writeString(buf);
     }
 
@@ -301,14 +306,16 @@ int main() {
 
     gpio_init(ENC_A);
     gpio_init(ENC_B);
+    gpio_init(IRQ_SIG);
     gpio_set_dir(ENC_A, GPIO_IN);
     gpio_set_dir(ENC_B, GPIO_IN);
+    gpio_set_dir(IRQ_SIG, GPIO_OUT);
     gpio_pull_up(ENC_A);
     gpio_pull_up(ENC_B);
 
 
     gpio_set_irq_enabled_with_callback(ENC_A,
-        GPIO_IRQ_EDGE_RISE, true, &gpio_callback);
+        GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
 
     pt_add_thread(protothread_serial);
     pt_add_thread(protothread_anim);
