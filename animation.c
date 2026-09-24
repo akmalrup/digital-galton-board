@@ -61,32 +61,38 @@ typedef signed int fix15 ;
 // the color of the boid
 char color = WHITE ;
 
+typedef struct {
+  fix15 x ;
+  fix15 y ;
+  fix15 vx ;
+  fix15 vy ;
+} boid_t ;
+
+typedef struct {
+  fix15 x ;
+  fix15 y ;
+} peg_t;
+
 // Boid on core 0
-fix15 boid0_x ;
-fix15 boid0_y ;
-fix15 boid0_vx ;
-fix15 boid0_vy ;
+boid_t boid0 ;
 
 // Boid on core 1
-fix15 boid1_x ;
-fix15 boid1_y ;
-fix15 boid1_vx ;
-fix15 boid1_vy ;
+boid_t boid1 ;
 
 // Create a semaphore
 semaphore_t draw_semaphore ;
 
 // Create a boid
-void spawnBoid(fix15* x, fix15* y, fix15* vx, fix15* vy, int direction)
+void spawnBoid(boid_t* b, int direction)
 {
   // Start in center of screen
-  *x = int2fix15(320) ;
-  *y = int2fix15(240) ;
+  b->x = int2fix15(320) ;
+  b->y = int2fix15(240) ;
   // Choose left or right
-  if (direction) *vx = int2fix15(3) ;
-  else *vx = int2fix15(-3) ;
+  if (direction) b->vx = int2fix15(3) ;
+  else b->vx = int2fix15(-3) ;
   // Moving down
-  *vy = int2fix15(1) ;
+  b->vy = int2fix15(1) ;
 }
 
 // Draw the boundaries
@@ -98,29 +104,29 @@ void drawArena() {
 }
 
 // Detect wallstrikes, update velocity and position
-void wallsAndEdges(fix15* x, fix15* y, fix15* vx, fix15* vy)
+void wallsAndEdges(boid_t* b)
 {
   // Reverse direction if we've hit a wall
-  if (hitTop(*y)) {
-    *vy = (-*vy) ;
-    *y  = (*y + int2fix15(5)) ;
+  if (hitTop(b->y)) {
+    b->vy = (-b->vy) ;
+    b->y  = (b->y + int2fix15(5)) ;
   }
-  if (hitBottom(*y)) {
-    *vy = (-*vy) ;
-    *y  = (*y - int2fix15(5)) ;
+  if (hitBottom(b->y)) {
+    b->vy = (-b->vy) ;
+    b->y  = (b->y - int2fix15(5)) ;
   } 
-  if (hitRight(*x)) {
-    *vx = (-*vx) ;
-    *x  = (*x - int2fix15(5)) ;
+  if (hitRight(b->x)) {
+    b->vx = (-b->vx) ;
+    b->x  = (b->x - int2fix15(5)) ;
   }
-  if (hitLeft(*x)) {
-    *vx = (-*vx) ;
-    *x  = (*x + int2fix15(5)) ;
+  if (hitLeft(b->x)) {
+    b->vx = (-b->vx) ;
+    b->x  = (b->x + int2fix15(5)) ;
   } 
 
   // Update position using velocity
-  *x = *x + *vx ;
-  *y = *y + *vy ;
+  b->x = b->x + b->vx ;
+  b->y = b->y + b->vy ;
 }
 
 // ==================================================
@@ -161,7 +167,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     PT_BEGIN(pt);
 
     // Spawn a boid
-    spawnBoid(&boid0_x, &boid0_y, &boid0_vx, &boid0_vy, 0);
+    spawnBoid(&boid0, 0);
 
     while(1) {
       // Wait for the signal that the buffer's changed
@@ -171,9 +177,9 @@ static PT_THREAD (protothread_anim(struct pt *pt))
       // Signal core 1 that it can start drawing
       PT_SEM_SDK_SIGNAL(pt, &draw_semaphore) ;
       // update boid's position and velocity
-      wallsAndEdges(&boid0_x, &boid0_y, &boid0_vx, &boid0_vy) ;
+      wallsAndEdges(&boid0) ;
       // draw the boid at its new position
-      fillCircle(fix2int15(boid0_x), fix2int15(boid0_y), 15, color); 
+      fillCircle(fix2int15(boid0.x), fix2int15(boid0.y), 15, color); 
       // draw the boundaries
       drawArena() ;
      // NEVER exit while
@@ -189,15 +195,15 @@ static PT_THREAD (protothread_anim1(struct pt *pt))
     PT_BEGIN(pt);
 
     // Spawn a boid
-    spawnBoid(&boid1_x, &boid1_y, &boid1_vx, &boid1_vy, 1);
+    spawnBoid(&boid1, 1);
 
     while(1) {
       // Wait for the signal from core 0
       PT_SEM_SDK_WAIT(pt, &draw_semaphore) ;
       // update boid's position and velocity
-      wallsAndEdges(&boid1_x, &boid1_y, &boid1_vx, &boid1_vy) ;
+      wallsAndEdges(&boid1) ;
       // draw the boid at its new position
-      fillCircle(fix2int15(boid1_x), fix2int15(boid1_y), 15, color); 
+      fillCircle(fix2int15(boid1.x), fix2int15(boid1.y), 15, color); 
      // NEVER exit while
     } // END WHILE(1)
   PT_END(pt);
