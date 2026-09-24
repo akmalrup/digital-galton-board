@@ -20,7 +20,7 @@ pico_generate_pio_header(VGA_Animation_Demo ${CMAKE_CURRENT_LIST_DIR}/VGA/vsync.
 pico_generate_pio_header(VGA_Animation_Demo ${CMAKE_CURRENT_LIST_DIR}/VGA/rgb.pio)
 
 # must match with executable name and source file names
-target_sources(VGA_Animation_Demo PRIVATE animation.c VGA/vga16_graphics_v3.c)
+target_sources(VGA_Animation_Demo PRIVATE encoder.c VGA/vga16_graphics_v3.c)
 
 # must match with executable name
 target_link_libraries(  VGA_Animation_Demo
