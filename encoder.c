@@ -121,39 +121,10 @@ void init_dma_chirp(void) {
 
 
 volatile int encoder_count = 0;
-static int previous_position = NEITHER;
 
-static int read_encoder(void) {
-    int a = gpio_get(ENC_A);
-    int b = gpio_get(ENC_B);
-    return (a << 1) | b;
-}
 
 void gpio_callback(uint gpio, uint32_t event_mask) {
-    int current_position = read_encoder();
-
-    if (current_position == previous_position) {
-        return;
-    }
-
-    if (previous_position == NEITHER) {
-        if      (current_position == A_SHORTED)    encoder_count++;
-        else if (current_position == B_SHORTED)    encoder_count--;
-    }
-    else if (previous_position == A_SHORTED) {
-        if      (current_position == BOTH_SHORTED) encoder_count++;
-        else if (current_position == NEITHER)      encoder_count--;
-    }
-    else if (previous_position == BOTH_SHORTED) {
-        if      (current_position == B_SHORTED)    encoder_count++;
-        else if (current_position == A_SHORTED)    encoder_count--;
-    }
-    else if (previous_position == B_SHORTED) {
-        if      (current_position == NEITHER)      encoder_count++;
-        else if (current_position == BOTH_SHORTED) encoder_count--;
-    }
-
-    previous_position = current_position;
+    encoder_count = gpio_get(ENC_B) ? encoder_count + 1 : encoder_count - 1;
 }
 
 typedef signed int fix15;
@@ -335,12 +306,9 @@ int main() {
     gpio_pull_up(ENC_A);
     gpio_pull_up(ENC_B);
 
-    previous_position = read_encoder();
 
     gpio_set_irq_enabled_with_callback(ENC_A,
-        GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
-    gpio_set_irq_enabled(ENC_B,
-        GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
+        GPIO_IRQ_EDGE_RISE, true, &gpio_callback);
 
     pt_add_thread(protothread_serial);
     pt_add_thread(protothread_anim);
