@@ -1,12 +1,9 @@
 /**
  * ECE 4760 / 5730 - Lab 2 (Digital Galton Board)
- * Week 1: rotary encoder software interface + VGA animation
  *
- * Merged demo:
- *  - Displays rotary encoder position on the VGA display
- *    (increments clockwise, decrements counterclockwise)
- *  - Animates two balls bouncing inside an arena box using dual-core
- *    protothreads (boid 0 on core 0, boid 1 on core 1)
+ * Rotary encoder interface + VGA ball & peg simulation:
+ *  - Displays rotary encoder position on VGA display
+ *  - Simulates one ball bouncing off a central peg under gravity
  *  - Serial console interface allows changing ball color (1-15)
  *
  * HARDWARE CONNECTIONS
@@ -21,85 +18,146 @@
  *  - GPIO 20 ---> 330 ohm resistor ---> VGA-Blue
  *  - GPIO 21 ---> 330 ohm resistor ---> VGA-Red
  *  - RP2040 GND ---> VGA-GND
- *
- * RESOURCES USED
- *  - PIO state machines 0, 1, and 2 on PIO instance 0
- *  - DMA channels (2, by claim mechanism)
- *  - 153.6 kBytes of RAM (for pixel color data)
- *  - GPIO interrupts on pins 14 and 15 for rotary encoder
- *  - Core 0 and Core 1 via Pico multicore library
  */
 
-// Include the VGA graphics library
 #include "VGA/vga16_graphics_v3.h"
 
-// Include standard libraries
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
 
-// Include Pico libraries
 #include "pico/stdlib.h"
 #include "pico/divider.h"
-#include "pico/multicore.h"
-#include "pico/sync.h"
 
-// Include hardware libraries
 #include "hardware/pio.h"
 #include "hardware/dma.h"
+#include "hardware/spi.h"
 #include "hardware/clocks.h"
 #include "hardware/pll.h"
 #include "hardware/gpio.h"
 
-// Include protothreads
 #include "pt_cornell_rp2040_v1_4.h"
 
-// === Rotary Encoder Definitions ====================================
+//
+// ENCODER DEFS
+//
 #define ENC_A 14
 #define ENC_B 15
-
-// One physical click of the knob produces one full electrical cycle,
-// which is four transitions. Turn the knob exactly one click with this
-// set to 1 to check what your encoder actually does.
 #define TRANSITIONS_PER_CLICK 4
 
-// The encoder has four electrical positions. COM is grounded and the
-// pins have pull-ups, so a pin reads LOW when a contact zone shorts it
-// to COM, and HIGH when it is floating.
-#define BOTH_SHORTED  0   // A low,  B low
-#define A_SHORTED     1   // A low,  B high
-#define B_SHORTED     2   // A high, B low
-#define NEITHER       3   // A high, B high
+#define BOTH_SHORTED  0
+#define A_SHORTED     1
+#define B_SHORTED     2
+#define NEITHER       3
 
-// Rotating one click clockwise walks through the positions in this
-// order:  NEITHER -> A_SHORTED -> BOTH_SHORTED -> B_SHORTED -> NEITHER
-// Counterclockwise is the same sequence in reverse.
+//
+// ADC / SPI / DMA DEFS 
+// 
+
+// Number of samples per period in sine table
+#define sine_table_size 256
+
+// Sine table
+int raw_sin[sine_table_size] ;
+
+// Table of values to be sent to DAC
+unsigned short DAC_data[sine_table_size] ;
+
+// Pointer to the address of the DAC data table
+unsigned short * address_pointer = &DAC_data[0] ;
+
+// A-channel, 1x, active
+#define DAC_config_chan_A 0b0011000000000000
+
+// SPI configurations
+#define PIN_MISO 4
+#define PIN_CS   5
+#define PIN_SCK  6
+#define PIN_MOSI 7
+#define SPI_PORT spi0
+
+// Number of DMA transfers per event
+const uint32_t transfer_count = sine_table_size ;
+
+// DMA channels and sound settings
+int data_chan ;
+int ctrl_chan ;
+#define CHIRP_PERIODS 100
+
+void dma_chirp(void) {
+    dma_channel_set_trans_count(ctrl_chan, CHIRP_PERIODS, false);
+    dma_channel_set_read_addr(ctrl_chan, &address_pointer, true);
+}
+
+void init_dma_chirp(void) {
+    for (int i = 0; i < sine_table_size; i++) {
+        raw_sin[i] = (int)(2047.0 * sin((float)i * 6.28318530718 / (float)sine_table_size) + 2047.0);
+        DAC_data[i] = (unsigned short)(DAC_config_chan_A | (raw_sin[i] & 0x0FFF));
+    }
+
+    spi_init(SPI_PORT, 20000000);
+    spi_set_format(SPI_PORT, 16, 0, 0, 0);
+    gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
+    gpio_set_function(PIN_CS,   GPIO_FUNC_SPI);
+    gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
+    gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
+
+    int audio_timer = dma_claim_unused_timer(true);
+    dma_timer_set_fraction(audio_timer, 1, 3401);
+
+    data_chan = dma_claim_unused_channel(true);
+    ctrl_chan = dma_claim_unused_channel(true);
+
+    dma_channel_config c_data = dma_channel_get_default_config(data_chan);
+    channel_config_set_transfer_data_size(&c_data, DMA_SIZE_16);
+    channel_config_set_read_increment(&c_data, true);
+    channel_config_set_write_increment(&c_data, false);
+    channel_config_set_dreq(&c_data, dma_get_timer_dreq(audio_timer));
+    channel_config_set_chain_to(&c_data, ctrl_chan);
+
+    dma_channel_configure(
+        data_chan,
+        &c_data,
+        &spi_get_hw(SPI_PORT)->dr,
+        DAC_data,
+        sine_table_size,
+        false
+    );
+
+    dma_channel_config c_ctrl = dma_channel_get_default_config(ctrl_chan);
+    channel_config_set_transfer_data_size(&c_ctrl, DMA_SIZE_32);
+    channel_config_set_read_increment(&c_ctrl, false);
+    channel_config_set_write_increment(&c_ctrl, false);
+    channel_config_set_chain_to(&c_ctrl, data_chan);
+
+    dma_channel_configure(
+        ctrl_chan,
+        &c_ctrl,
+        &dma_hw->ch[data_chan].al3_read_addr_trig,
+        &address_pointer,
+        1,
+        false
+    );
+}
+
 
 volatile int encoder_count = 0;
 static int previous_position = NEITHER;
 
-// Read both pins and combine them into a single position number 0-3.
-// Bit 1 is channel A, bit 0 is channel B.
 static int read_encoder(void) {
     int a = gpio_get(ENC_A);
     int b = gpio_get(ENC_B);
     return (a << 1) | b;
 }
 
-// This runs every time either encoder pin changes, in either direction.
 void gpio_callback(uint gpio, uint32_t event_mask) {
     int current_position = read_encoder();
 
-    // If nothing actually changed, the contacts are just bouncing.
-    // Ignore it.
     if (current_position == previous_position) {
         return;
     }
 
-    // Figure out which way we moved by looking at where we came from
-    // and where we ended up. Anything that isn't one of these eight
-    // legal moves is noise, and we ignore it.
     if (previous_position == NEITHER) {
         if      (current_position == A_SHORTED)    encoder_count++;
         else if (current_position == B_SHORTED)    encoder_count--;
@@ -120,207 +178,179 @@ void gpio_callback(uint gpio, uint32_t event_mask) {
     previous_position = current_position;
 }
 
-// === Fixed point macros ============================================
-typedef signed int fix15 ;
+typedef signed int fix15;
 #define multfix15(a,b) ((fix15)((((signed long long)(a))*((signed long long)(b)))>>15))
-#define float2fix15(a) ((fix15)((a)*32768.0)) // 2^15
+#define float2fix15(a) ((fix15)((a)*32768.0))
 #define fix2float15(a) ((float)(a)/32768.0)
-#define absfix15(a) abs(a) 
+#define absfix15(a) abs(a)
 #define int2fix15(a) ((fix15)(a << 15))
 #define fix2int15(a) ((int)(a >> 15))
-#define char2fix15(a) (fix15)(((fix15)(a)) << 15)
-#define divfix(a,b) (fix15)(div_s64s64( (((signed long long)(a)) << 15), ((signed long long)(b))))
+#define divfix(a,b) (fix15)(div_s64s64((((signed long long)(a)) << 15), ((signed long long)(b))))
 
-// Wall detection
-#define hitBottom(b) (b>int2fix15(380))
-#define hitTop(b) (b<int2fix15(100))
-#define hitLeft(a) (a<int2fix15(100))
-#define hitRight(a) (a>int2fix15(540))
-
-// The color of the boid
-char color = WHITE ;
+#define BALL_RADIUS 6
+#define PEG_RADIUS  6
+#define GRAVITY     float2fix15(0.15)
+#define BOUNCINESS  float2fix15(0.8)
 
 typedef struct {
-  fix15 x ;
-  fix15 y ;
-  fix15 vx ;
-  fix15 vy ;
-} boid_t ;
+    fix15 x;
+    fix15 y;
+    fix15 vx;
+    fix15 vy;
+} boid_t;
 
 typedef struct {
-  fix15 x ;
-  fix15 y ;
+    fix15 x;
+    fix15 y;
 } peg_t;
 
-// Boid on core 0
-boid_t boid0 ;
+boid_t ball;
+peg_t peg;
+char color = WHITE;
 
-// Boid on core 1
-boid_t boid1 ;
-
-// Create a semaphore
-semaphore_t draw_semaphore ;
-
-// Create a boid
-void spawnBoid(boid_t* b, int direction)
-{
-  // Start in center of screen
-  b->x = int2fix15(320) ;
-  b->y = int2fix15(240) ;
-  // Choose left or right
-  if (direction) b->vx = int2fix15(3) ;
-  else b->vx = int2fix15(-3) ;
-  // Moving down
-  b->vy = int2fix15(1) ;
+void spawnBall(boid_t* b) {
+    b->x = int2fix15(320);
+    b->y = int2fix15(115);
+    b->vx = 0;
+    b->vy = 0;
 }
 
-// Draw the boundaries
-void drawArena() {
-  drawVLine(100, 100, 280, WHITE) ;
-  drawVLine(540, 100, 280, WHITE) ;
-  drawHLine(100, 100, 440, WHITE) ;
-  drawHLine(100, 380, 440, WHITE) ;
+void updateBall(boid_t* b, peg_t* p) {
+    b->x += b->vx;
+    b->y += b->vy;
+
+    fix15 dx = b->x - p->x;
+    fix15 dy = b->y - p->y;
+    fix15 col_dist = int2fix15(BALL_RADIUS + PEG_RADIUS);
+
+    static int last_peg = -1;
+    int colliding = 0;
+
+    if (absfix15(dx) < col_dist && absfix15(dy) < col_dist) {
+        float fdx = fix2float15(dx);
+        float fdy = fix2float15(dy);
+        float fdist = sqrtf(fdx * fdx + fdy * fdy);
+        fix15 distance = float2fix15(fdist);
+
+        if (distance > 0 && distance < col_dist) {
+            colliding = 1;
+            dma_chirp();
+
+            if (fabsf(fdx) < 0.5f) {
+                fdx = (rand() & 1) ? 2.0f : -2.0f;
+                fdist = sqrtf(fdx * fdx + fdy * fdy);
+            }
+
+            fix15 normal_x = float2fix15(fdx / fdist);
+            fix15 normal_y = float2fix15(fdy / fdist);
+
+            fix15 intermediate_term = -2 * (multfix15(normal_x, b->vx) + multfix15(normal_y, b->vy));
+
+            fix15 teleport_dist = int2fix15(PEG_RADIUS + BALL_RADIUS + 1);
+            b->x = p->x + multfix15(normal_x, teleport_dist);
+            b->y = p->y + multfix15(normal_y, teleport_dist);
+
+            if (intermediate_term > 0) {
+                b->vx += multfix15(normal_x, intermediate_term);
+                b->vy += multfix15(normal_y, intermediate_term);
+            }
+
+            int current_peg = 0;
+            if (current_peg != last_peg) {
+                b->vx = multfix15(BOUNCINESS, b->vx);
+                b->vy = multfix15(BOUNCINESS, b->vy);
+
+                fix15 impulse = (rand() & 1) ? float2fix15(0.2) : float2fix15(-0.2);
+                b->vx += impulse;
+
+                dma_chirp();
+
+                last_peg = current_peg;
+            }
+        }
+    }
+
+    if (!colliding) {
+        last_peg = -1;
+    }
+
+    if (b->y > int2fix15(380 - BALL_RADIUS)) {
+        spawnBall(b);
+        last_peg = -1;
+        return;
+    }
+
+    if (b->x < int2fix15(100 + BALL_RADIUS)) {
+        b->vx = -b->vx;
+        b->x = int2fix15(100 + BALL_RADIUS);
+    } else if (b->x > int2fix15(540 - BALL_RADIUS)) {
+        b->vx = -b->vx;
+        b->x = int2fix15(540 - BALL_RADIUS);
+    }
+
+    if (b->y < int2fix15(100 + BALL_RADIUS)) {
+        b->vy = -b->vy;
+        b->y = int2fix15(100 + BALL_RADIUS);
+    }
+
+    b->vy += GRAVITY;
 }
 
-// Detect wallstrikes, update velocity and position
-void wallsAndEdges(boid_t* b)
-{
-  // Reverse direction if we've hit a wall
-  if (hitTop(b->y)) {
-    b->vy = (-b->vy) ;
-    b->y  = (b->y + int2fix15(5)) ;
-  }
-  if (hitBottom(b->y)) {
-    b->vy = (-b->vy) ;
-    b->y  = (b->y - int2fix15(5)) ;
-  } 
-  if (hitRight(b->x)) {
-    b->vx = (-b->vx) ;
-    b->x  = (b->x - int2fix15(5)) ;
-  }
-  if (hitLeft(b->x)) {
-    b->vx = (-b->vx) ;
-    b->x  = (b->x + int2fix15(5)) ;
-  } 
-
-  // Update position using velocity
-  b->x = b->x + b->vx ;
-  b->y = b->y + b->vy ;
-}
-
-// ==================================================
-// === User serial input thread
-// ==================================================
 static PT_THREAD (protothread_serial(struct pt *pt))
 {
     PT_BEGIN(pt);
-    // stores user input
-    static int user_input ;
-    // wait for 1 sec
-    PT_YIELD_usec(1000000) ;
-    // announce the threader version
+    static int user_input;
+    PT_YIELD_usec(1000000);
     sprintf(pt_serial_out_buffer, "Protothreads RP2040 v1.4\n\r");
-    // non-blocking write
-    serial_write ;
-    while(1) {
-        // print prompt
+    serial_write;
+    while (1) {
         sprintf(pt_serial_out_buffer, "input a number in the range 1-15: ");
-        // non-blocking write
-        serial_write ;
-        // spawn a thread to do the non-blocking serial read
-        serial_read ;
-        // convert input string to number
-        sscanf(pt_serial_in_buffer,"%d", &user_input) ;
-        // update boid color
-        if ((user_input > 0) && (user_input < 16)) {
-          color = (char)user_input ;
+        serial_write;
+        serial_read;
+        sscanf(pt_serial_in_buffer, "%d", &user_input);
+        if (user_input > 0 && user_input < 16) {
+            color = (char)user_input;
         }
-    } // END WHILE(1)
-  PT_END(pt);
-} // serial thread
+    }
+    PT_END(pt);
+}
 
-// ==================================================
-// === Animation & display on core 0
-// ==================================================
 static PT_THREAD (protothread_anim(struct pt *pt))
 {
-    // Mark beginning of thread
     PT_BEGIN(pt);
 
     static char buf[16];
 
-    // Spawn a boid
-    spawnBoid(&boid0, 0);
+    spawnBall(&ball);
 
-    while(1) {
-      // Wait for the signal that the buffer's changed
-      PT_YIELD_UNTIL(pt, draw_start_signal()) ;
-      // Clear the buffer
-      clearLowFrame(0, BLACK);
-      // Signal core 1 that it can start drawing
-      PT_SEM_SDK_SIGNAL(pt, &draw_semaphore) ;
-      // Update boid's position and velocity
-      wallsAndEdges(&boid0) ;
-      // Draw the boid at its new position
-      fillCircle(fix2int15(boid0.x), fix2int15(boid0.y), 15, color); 
-      // Draw the boundaries
-      drawArena() ;
+    while (1) {
+        PT_YIELD_UNTIL(pt, draw_start_signal());
+        clearLowFrame(0, BLACK);
 
-      // Draw the encoder count in the margin above the arena box (y < 100)
-      setTextColor(WHITE);
-      setTextSize(3);
-      setCursor(80, 40);
-      sprintf(buf, "%d", encoder_count / TRANSITIONS_PER_CLICK);
-      writeString(buf);
-     // NEVER exit while
-    } // END WHILE(1)
-  PT_END(pt);
-} // animation thread
+        updateBall(&ball, &peg);
 
-// ==================================================
-// === Animation on core 1
-// ==================================================
-static PT_THREAD (protothread_anim1(struct pt *pt))
-{
-    // Mark beginning of thread
-    PT_BEGIN(pt);
+        fillCircle(fix2int15(peg.x), fix2int15(peg.y), PEG_RADIUS, WHITE);
+        fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, color);
 
-    // Spawn a boid
-    spawnBoid(&boid1, 1);
+        setTextColor(WHITE);
+        setTextSize(3);
+        setCursor(80, 40);
+        sprintf(buf, "%d", encoder_count / TRANSITIONS_PER_CLICK);
+        writeString(buf);
+    }
 
-    while(1) {
-      // Wait for the signal from core 0
-      PT_SEM_SDK_WAIT(pt, &draw_semaphore) ;
-      // Update boid's position and velocity
-      wallsAndEdges(&boid1) ;
-      // Draw the boid at its new position
-      fillCircle(fix2int15(boid1.x), fix2int15(boid1.y), 15, color); 
-     // NEVER exit while
-    } // END WHILE(1)
-  PT_END(pt);
-} // animation thread 1
-
-// ========================================
-// === core 1 main -- started in main below
-// ========================================
-void core1_main(){
-  // Add animation thread
-  pt_add_thread(protothread_anim1);
-  // Start the scheduler
-  pt_schedule_start ;
+    PT_END(pt);
 }
 
-// ========================================
-// === main
-// ========================================
 int main() {
     set_sys_clock_khz(150000, true);
     stdio_init_all();
     initVGA();
+    init_dma_chirp();
 
-    // The encoder never drives these pins high. COM is grounded, and
-    // A and B float when no contact zone is underneath them, so the
-    // pull-ups are what make a floating pin read as HIGH.
+    peg.x = int2fix15(320);
+    peg.y = int2fix15(240);
+
     gpio_init(ENC_A);
     gpio_init(ENC_B);
     gpio_set_dir(ENC_A, GPIO_IN);
@@ -328,31 +358,16 @@ int main() {
     gpio_pull_up(ENC_A);
     gpio_pull_up(ENC_B);
 
-    // Start from wherever the knob is actually sitting right now.
     previous_position = read_encoder();
 
-    // Interrupt on both rising and falling edges of both pins, because
-    // we need to see all four transitions of a click. There is a single
-    // shared GPIO interrupt handler for all pins, so the callback is
-    // registered once and the second pin is enabled separately.
     gpio_set_irq_enabled_with_callback(ENC_A,
         GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
     gpio_set_irq_enabled(ENC_B,
         GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
 
-    // Initialize the semaphore
-    // Arguments: pointer to sem, initial count, max count
-    sem_init(&draw_semaphore, 0, 1);
-
-    // Start core 1 
-    multicore_reset_core1();
-    multicore_launch_core1(&core1_main);
-
-    // Add threads on core 0
     pt_add_thread(protothread_serial);
     pt_add_thread(protothread_anim);
 
-    // Start scheduler on core 0
     pt_schedule_start;
 
     return 0;

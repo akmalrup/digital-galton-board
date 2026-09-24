@@ -51,7 +51,8 @@ target_link_libraries(  VGA_Animation_Demo
                         hardware_adc
                         hardware_irq
                         hardware_clocks
-                        hardware_pll)
+                        hardware_pll
+                        hardware_spi)
 
 # must match with executable name
 pico_add_extra_outputs(VGA_Animation_Demo)
