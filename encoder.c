@@ -1,14 +1,10 @@
 /**
+ * ECE 4760 / 5730 - Lab 2 (Digital Galton Board)
+ * Week 1: rotary encoder software interface
  *
- * Both channels raise a GPIO interrupt on both edges. The shared
- * callback re-reads the live state of both pins and feeds the
- * (previous, current) pair into a Gray-code table: +1 for a legal
- * clockwise transition, -1 for counterclockwise, 0 for no change or
- * an illegal jump -- which is what contact bounce looks like, so the
- * zeros in the table are the debouncing.
- *
- * COM is tied to GND and A/B use internal pull-ups, so a pin reads
- * LOW when a contact zone sits underneath it, HIGH when floating.
+ * Displays a number on the VGA display that increments when the
+ * encoder is rotated clockwise and decrements when rotated
+ * counterclockwise.
  *
  * HARDWARE CONNECTIONS
  *  - GPIO 14 ---> Encoder channel A
@@ -33,35 +29,65 @@
  #define ENC_A 14
  #define ENC_B 15
  
- //a detent is the physical click you feel when you turn the knob. 
- #define TRANSITIONS_PER_DETENT 4
+ // One physical click of the knob produces one full electrical cycle,
+ // which is four transitions. Turn the knob exactly one click with this
+ // set to 1 to check what your encoder actually does.
+ #define TRANSITIONS_PER_CLICK 4
  
- // Index = (previous_state << 2) | current_state, where
- // state = (A << 1) | B from the raw (active-low) pin readings.
- // If the count runs backwards, swap ENC_A and ENC_B above.
- static const int8_t enc_table[16] = {
-      0, -1,  1,  0,
-      1,  0,  0, -1,
-     -1,  0,  0,  1,
-      0,  1, -1,  0
- };
+ // The encoder has four electrical positions. COM is grounded and the
+ // pins have pull-ups, so a pin reads LOW when a contact zone shorts it
+ // to COM, and HIGH when it is floating.
+ #define BOTH_SHORTED  0   // A low,  B low
+ #define A_SHORTED     1   // A low,  B high
+ #define B_SHORTED     2   // A high, B low
+ #define NEITHER       3   // A high, B high
+ 
+ // Rotating one click clockwise walks through the positions in this
+ // order:  NEITHER -> A_SHORTED -> BOTH_SHORTED -> B_SHORTED -> NEITHER
+ // Counterclockwise is the same sequence in reverse.
  
  volatile int encoder_count = 0;
- static volatile uint8_t enc_prev_state = 0;
+ static int previous_position = NEITHER;
  
- // Read both channels in one bus access, packed as (A << 1) | B.
- static inline uint8_t read_encoder_state(void) {
-     uint32_t pins = gpio_get_all();
-     return (uint8_t)((((pins >> ENC_A) & 1u) << 1) | ((pins >> ENC_B) & 1u));
+ // Read both pins and combine them into a single position number 0-3.
+ // Bit 1 is channel A, bit 0 is channel B.
+ static int read_encoder(void) {
+     int a = gpio_get(ENC_A);
+     int b = gpio_get(ENC_B);
+     return (a << 1) | b;
  }
  
- // Shared GPIO interrupt handler. Ignores both arguments: by the time
- // the ISR runs the contacts may have moved again, so re-reading live
- // state and letting the table arbitrate is cheaper and correct.
+ // This runs every time either encoder pin changes, in either direction.
  void gpio_callback(uint gpio, uint32_t event_mask) {
-     uint8_t curr = read_encoder_state();
-     encoder_count += enc_table[(enc_prev_state << 2) | curr];
-     enc_prev_state = curr;
+     int current_position = read_encoder();
+ 
+     // If nothing actually changed, the contacts are just bouncing.
+     // Ignore it.
+     if (current_position == previous_position) {
+         return;
+     }
+ 
+     // Figure out which way we moved by looking at where we came from
+     // and where we ended up. Anything that isn't one of these eight
+     // legal moves is noise, and we ignore it.
+     if (previous_position == NEITHER) {
+         if      (current_position == A_SHORTED)    encoder_count++;
+         else if (current_position == B_SHORTED)    encoder_count--;
+     }
+     else if (previous_position == A_SHORTED) {
+         if      (current_position == BOTH_SHORTED) encoder_count++;
+         else if (current_position == NEITHER)      encoder_count--;
+     }
+     else if (previous_position == BOTH_SHORTED) {
+         if      (current_position == B_SHORTED)    encoder_count++;
+         else if (current_position == A_SHORTED)    encoder_count--;
+     }
+     else if (previous_position == B_SHORTED) {
+         if      (current_position == NEITHER)      encoder_count++;
+         else if (current_position == BOTH_SHORTED) encoder_count--;
+     }
+ 
+     previous_position = current_position;
  }
  
  static PT_THREAD (protothread_anim(struct pt *pt))
@@ -72,14 +98,14 @@
  
      while (1) {
          // Wait for the back buffer, then clear it. Everything visible
-         // this frame must be redrawn -- nothing persists across a flip.
+         // this frame has to be redrawn -- nothing carries over.
          PT_YIELD_UNTIL(pt, draw_start_signal());
          clearLowFrame(0, BLACK);
  
          setTextColor(WHITE);
          setTextSize(3);
          setCursor(80, 120);
-         sprintf(buf, "%d", encoder_count / TRANSITIONS_PER_DETENT);
+         sprintf(buf, "%d", encoder_count / TRANSITIONS_PER_CLICK);
          writeString(buf);
      }
  
@@ -91,9 +117,9 @@
      stdio_init_all();
      initVGA();
  
-     // The encoder never drives these pins high -- COM is grounded and
-     // A/B float when no contact zone is underneath -- so the pull-up
-     // defines the idle level.
+     // The encoder never drives these pins high. COM is grounded, and
+     // A and B float when no contact zone is underneath them, so the
+     // pull-ups are what make a floating pin read as HIGH.
      gpio_init(ENC_A);
      gpio_init(ENC_B);
      gpio_set_dir(ENC_A, GPIO_IN);
@@ -101,14 +127,13 @@
      gpio_pull_up(ENC_A);
      gpio_pull_up(ENC_B);
  
-     // Seed with wherever the knob is sitting, so the first real
-     // transition isn't compared against a fictitious state of 0.
-     enc_prev_state = read_encoder_state();
+     // Start from wherever the knob is actually sitting right now.
+     previous_position = read_encoder();
  
-     // One shared GPIO IRQ handler serves the whole pin bank, so the
-     // callback is registered once and the second pin is enabled with
-     // the plain variant. Both edges on both channels: rising edges
-     // alone throw away half the information, including direction.
+     // Interrupt on both rising and falling edges of both pins, because
+     // we need to see all four transitions of a click. There is a single
+     // shared GPIO interrupt handler for all pins, so the callback is
+     // registered once and the second pin is enabled separately.
      gpio_set_irq_enabled_with_callback(ENC_A,
          GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
      gpio_set_irq_enabled(ENC_B,
