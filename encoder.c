@@ -55,17 +55,12 @@
 // ADC / SPI / DMA DEFS 
 // 
 
-// Number of samples per period in sine table
 #define sine_table_size 256
+#define CHIRP_PERIODS   5
+#define CHIRP_SAMPLES   (CHIRP_PERIODS * sine_table_size)
 
-// Sine table
-int raw_sin[sine_table_size] ;
-
-// Table of values to be sent to DAC
-unsigned short DAC_data[sine_table_size] ;
-
-// Pointer to the address of the DAC data table
-unsigned short * address_pointer = &DAC_data[0] ;
+// Sine table aligned to 512 bytes (2^9) for hardware ring-buffer wrapping
+__attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 
 // A-channel, 1x, active
 #define DAC_config_chan_A 0b0011000000000000
@@ -77,23 +72,18 @@ unsigned short * address_pointer = &DAC_data[0] ;
 #define PIN_MOSI 7
 #define SPI_PORT spi0
 
-// Number of DMA transfers per event
-const uint32_t transfer_count = sine_table_size ;
-
-// DMA channels and sound settings
-int data_chan ;
-int ctrl_chan ;
-#define CHIRP_PERIODS 100
+int data_chan;
 
 void dma_chirp(void) {
-    dma_channel_set_trans_count(ctrl_chan, CHIRP_PERIODS, false);
-    dma_channel_set_read_addr(ctrl_chan, &address_pointer, true);
+    dma_channel_abort(data_chan);
+    dma_channel_set_read_addr(data_chan, DAC_data, false);
+    dma_channel_set_trans_count(data_chan, CHIRP_SAMPLES, true);
 }
 
 void init_dma_chirp(void) {
     for (int i = 0; i < sine_table_size; i++) {
-        raw_sin[i] = (int)(2047.0 * sin((float)i * 6.28318530718 / (float)sine_table_size) + 2047.0);
-        DAC_data[i] = (unsigned short)(DAC_config_chan_A | (raw_sin[i] & 0x0FFF));
+        int raw_sin = (int)(2047.0 * sin((float)i * 6.28318530718 / (float)sine_table_size) + 2047.0);
+        DAC_data[i] = (unsigned short)(DAC_config_chan_A | (raw_sin & 0x0FFF));
     }
 
     spi_init(SPI_PORT, 20000000);
@@ -103,40 +93,28 @@ void init_dma_chirp(void) {
     gpio_set_function(PIN_SCK,  GPIO_FUNC_SPI);
     gpio_set_function(PIN_MOSI, GPIO_FUNC_SPI);
 
+    // Initial neutral mid-scale output
+    uint16_t neutral = DAC_config_chan_A | 2048;
+    spi_write16_blocking(SPI_PORT, &neutral, 1);
+
     int audio_timer = dma_claim_unused_timer(true);
     dma_timer_set_fraction(audio_timer, 1, 3401);
 
     data_chan = dma_claim_unused_channel(true);
-    ctrl_chan = dma_claim_unused_channel(true);
 
     dma_channel_config c_data = dma_channel_get_default_config(data_chan);
     channel_config_set_transfer_data_size(&c_data, DMA_SIZE_16);
     channel_config_set_read_increment(&c_data, true);
     channel_config_set_write_increment(&c_data, false);
+    channel_config_set_ring(&c_data, false, 9); // 2^9 = 512 bytes (256 samples of uint16)
     channel_config_set_dreq(&c_data, dma_get_timer_dreq(audio_timer));
-    channel_config_set_chain_to(&c_data, ctrl_chan);
 
     dma_channel_configure(
         data_chan,
         &c_data,
         &spi_get_hw(SPI_PORT)->dr,
         DAC_data,
-        sine_table_size,
-        false
-    );
-
-    dma_channel_config c_ctrl = dma_channel_get_default_config(ctrl_chan);
-    channel_config_set_transfer_data_size(&c_ctrl, DMA_SIZE_32);
-    channel_config_set_read_increment(&c_ctrl, false);
-    channel_config_set_write_increment(&c_ctrl, false);
-    channel_config_set_chain_to(&c_ctrl, data_chan);
-
-    dma_channel_configure(
-        ctrl_chan,
-        &c_ctrl,
-        &dma_hw->ch[data_chan].al3_read_addr_trig,
-        &address_pointer,
-        1,
+        0,
         false
     );
 }
@@ -187,10 +165,10 @@ typedef signed int fix15;
 #define fix2int15(a) ((int)(a >> 15))
 #define divfix(a,b) (fix15)(div_s64s64((((signed long long)(a)) << 15), ((signed long long)(b))))
 
-#define BALL_RADIUS 6
+#define BALL_RADIUS 4
 #define PEG_RADIUS  6
-#define GRAVITY     float2fix15(0.15)
-#define BOUNCINESS  float2fix15(0.8)
+#define GRAVITY     float2fix15(0.37)
+#define BOUNCINESS  float2fix15(0.5)
 
 typedef struct {
     fix15 x;
@@ -234,7 +212,6 @@ void updateBall(boid_t* b, peg_t* p) {
 
         if (distance > 0 && distance < col_dist) {
             colliding = 1;
-            dma_chirp();
 
             if (fabsf(fdx) < 0.5f) {
                 fdx = (rand() & 1) ? 2.0f : -2.0f;
@@ -274,7 +251,7 @@ void updateBall(boid_t* b, peg_t* p) {
         last_peg = -1;
     }
 
-    if (b->y > int2fix15(380 - BALL_RADIUS)) {
+    if (b->y > int2fix15(480 - BALL_RADIUS)) {
         spawnBall(b);
         last_peg = -1;
         return;
