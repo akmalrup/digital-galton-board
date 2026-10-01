@@ -146,15 +146,15 @@ typedef signed int fix15;
 #define BOUNCINESS  float2fix15(0.5)
 
 typedef struct {
-    fix15 x;
-    fix15 y;
+    int x;
+    int y;
     fix15 vx;
     fix15 vy;
 } boid_t;
 
 typedef struct {
-    fix15 x;
-    fix15 y;
+    int x;
+    int y;
 } peg_t;
 
 boid_t ball;
@@ -162,18 +162,18 @@ peg_t peg [136];
 char color = WHITE;
 
 void spawnBall(boid_t* b) {
-    b->x = int2fix15(320);
-    b->y = int2fix15(5);
+    b->x = 320;
+    b->y = 10;
     b->vx = 0;
     b->vy = 0;
 }
 
 void updateBall(boid_t* b, peg_t* p) {
-    b->x += b->vx;
-    b->y += b->vy;
+    b->x += fix2int15(b->vx);
+    b->y += fix2int15(b->vy);
 
-    fix15 dx = b->x - p->x;
-    fix15 dy = b->y - p->y;
+    fix15 dx = int2fix15(b->x - p->x);
+    fix15 dy = int2fix15(b->y - p->y);
     fix15 col_dist = int2fix15(BALL_RADIUS + PEG_RADIUS);
 
     static int last_peg = -1;
@@ -199,8 +199,8 @@ void updateBall(boid_t* b, peg_t* p) {
             fix15 intermediate_term = -2 * (multfix15(normal_x, b->vx) + multfix15(normal_y, b->vy));
 
             fix15 teleport_dist = int2fix15(PEG_RADIUS + BALL_RADIUS + 1);
-            b->x = p->x + multfix15(normal_x, teleport_dist);
-            b->y = p->y + multfix15(normal_y, teleport_dist);
+            b->x = p->x + fix2int15(multfix15(normal_x, teleport_dist));
+            b->y = p->y + fix2int15(multfix15(normal_y, teleport_dist));
 
             if (intermediate_term > 0) {
                 b->vx += multfix15(normal_x, intermediate_term);
@@ -226,23 +226,23 @@ void updateBall(boid_t* b, peg_t* p) {
         last_peg = -1;
     }
 
-    if (b->y > int2fix15(480 - BALL_RADIUS)) {
+    if (b->y > 480 - BALL_RADIUS) {
         spawnBall(b);
         last_peg = -1;
         return;
     }
 
-    if (b->x < int2fix15(35 + BALL_RADIUS)) {
+    if (b->x < 35 + BALL_RADIUS) {
         b->vx = -b->vx;
-        b->x = int2fix15(35 + BALL_RADIUS);
-    } else if (b->x > int2fix15(605 - BALL_RADIUS)) {
+        b->x = 35 + BALL_RADIUS;
+    } else if (b->x > 605 - BALL_RADIUS) {
         b->vx = -b->vx;
-        b->x = int2fix15(605 - BALL_RADIUS);
+        b->x = 605 - BALL_RADIUS;
     }
 
-    if (b->y < int2fix15(100 + BALL_RADIUS)) {
+    if (b->y < 100 + BALL_RADIUS) {
         b->vy = -b->vy;
-        b->y = int2fix15(100 + BALL_RADIUS);
+        b->y = 100 + BALL_RADIUS;
     }
 
     b->vy += GRAVITY;
@@ -280,11 +280,12 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         clearLowFrame(0, BLACK);
 
 
+        updateBall(&ball, &peg[0]);
+
         for (int i = 0; i < 136; i++) {
-            updateBall(&ball, &peg[i]);
-            fillCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
+            fillCircle(peg[i].x, peg[i].y, PEG_RADIUS, WHITE);
         }
-        fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, color);
+        fillCircle(ball.x, ball.y, BALL_RADIUS, color);
 
         setTextColor(WHITE);
         setTextSize(3);
@@ -295,6 +296,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
     PT_END(pt);
 }
+
 
 int main() {
     set_sys_clock_khz(150000, true);
@@ -307,8 +309,8 @@ int main() {
         for (int column = 0; column <= row; column++) {
             int x = 320 + (2 * column - row) * 19;
             int y = 100 + row * 19;
-            peg[peg_index].x = int2fix15(x);
-            peg[peg_index].y = int2fix15(y);
+            peg[peg_index].x = x;
+            peg[peg_index].y = y;
             peg_index++;
         }
     }
