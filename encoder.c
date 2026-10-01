@@ -362,6 +362,8 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
     while (1) {
         PT_YIELD_UNTIL(pt, draw_start_signal());
+        //check if we are meeting the 60 fps deadline 
+        uint32_t start = time_us_32(); 
         clearLowFrame(0, BLACK);
 
         for (int i = 0; i < num_balls; i++) {
@@ -420,6 +422,11 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         setCursor(1, 90);
         sprintf(buf, "Gravity: %d.%02d", grav_whole, grav_hundredths);
         writeString(buf);
+
+        if (time_us_32() - start > 16667) {  
+            missed = true;
+        }
+        gpio_put(LED_PIN, missed);
         
     }
 
@@ -464,6 +471,9 @@ int main() {
     gpio_set_dir(ENC_B, GPIO_IN);
     gpio_pull_up(ENC_A);
     gpio_pull_up(ENC_B);
+
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
 
 
     gpio_init(PUSHBUTTON);
