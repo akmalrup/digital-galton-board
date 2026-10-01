@@ -78,7 +78,7 @@ __attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 // histogram 
 
 #define HIST_HEIGHT 80
-#define NUM_BINS    10
+#define NUM_BINS    17
 #define BIN_WIDTH   (640 / NUM_BINS)
 
 int data_chan;
