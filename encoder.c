@@ -79,8 +79,8 @@ __attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 
 #define HIST_HEIGHT 80
 #define NUM_BINS    17
-#define BIN_WIDTH   (640 / NUM_BINS)
-#define HIST_LEFT 10
+#define BIN_WIDTH   38
+#define HIST_LEFT -2
 
 int data_chan;
 
