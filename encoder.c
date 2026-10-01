@@ -31,6 +31,8 @@
 #include "pico/stdlib.h"
 #include "pico/divider.h"
 #include "pico/aon_timer.h"
+#include "pico/multicore.h"
+#include "pico/sync.h"
 
 #include "hardware/pio.h"
 #include "hardware/dma.h"
@@ -162,6 +164,9 @@ typedef enum {
 
 volatile pusher_state_t pusher_state = BALLS;
 int histogram[NUM_BINS] = {0};
+
+semaphore_t sem_physics_start;
+semaphore_t sem_physics_done;
 
 void reset_histogram() {
     for (int i = 0; i < NUM_BINS; i++) {
@@ -379,6 +384,24 @@ void draw_histogram(int* hist) {
 
 
 
+void core1_main() {
+    while (1) {
+        sem_acquire_blocking(&sem_physics_start);
+
+        for (int i = 0; i < num_balls; i++) {
+            updateBallPhysics(&ball[i]);
+        }
+
+        for (int i = 0; i < 136; i++) {
+            for (int j = 0; j < num_balls; j++) {
+                checkBallCollision(&ball[j], &peg[i]);
+            }
+        }
+
+        sem_release(&sem_physics_done);
+    }
+}
+
 static PT_THREAD (protothread_anim(struct pt *pt))
 {
     PT_BEGIN(pt);
@@ -396,20 +419,15 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         uint32_t start = time_us_32(); 
         clearLowFrame(0, BLACK);
 
-        for (int i = 0; i < num_balls; i++) {
-            updateBallPhysics(&ball[i]);
-        }
+        // Signal Core 1 to compute physics in parallel
+        sem_release(&sem_physics_start);
 
+        // Core 0 draws pegs while Core 1 calculates physics
         for (int i = 0; i < 136; i++) {
             fillCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
-            for (int j = 0; j < num_balls; j++) {
-                checkBallCollision(&ball[j], &peg[i]);
-            }
-        }
-        for (int i = 0; i < num_balls; i++) {
-            fillCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), ball_radius, color);
         }
 
+        // Core 0 draws histogram and UI while Core 1 calculates physics
         draw_histogram(histogram);
 
         setTextSize(1);
@@ -458,6 +476,13 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         setCursor(1, 100);
         sprintf(buf, "Ball Radius: %d", ball_radius);
         writeString(buf);
+
+        // Wait for Core 1 physics calculation to finish before drawing balls
+        PT_SEM_SDK_WAIT(pt, &sem_physics_done);
+
+        for (int i = 0; i < num_balls; i++) {
+            fillCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), ball_radius, color);
+        }
 
         missed = time_us_32() - start > 16667;
 
@@ -523,7 +548,11 @@ int main() {
     gpio_set_irq_enabled(PUSHBUTTON,
         GPIO_IRQ_EDGE_FALL, true);
 
-    
+    sem_init(&sem_physics_start, 0, 1);
+    sem_init(&sem_physics_done, 0, 1);
+    multicore_reset_core1();
+    multicore_launch_core1(core1_main);
+
     pt_add_thread(protothread_serial);
     pt_add_thread(protothread_anim);
 
