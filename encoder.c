@@ -26,9 +26,11 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
 
 #include "pico/stdlib.h"
 #include "pico/divider.h"
+#include "pico/aon_timer.h"
 
 #include "hardware/pio.h"
 #include "hardware/dma.h"
@@ -127,15 +129,21 @@ void init_dma_chirp(void) {
 }
 
 
+#define MAX_NUM_BALLS 256
+volatile int num_balls = 10;
+volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
 
-int irq_state = 1;
-
 void gpio_callback(uint gpio, uint32_t event_mask) {
-    irq_state = !irq_state;
     int enc_b_read = gpio_get(ENC_B);
-    gpio_put(IRQ_SIG, enc_b_read);
-    encoder_count = (enc_b_read) ? encoder_count + 1 : encoder_count - 1;
+    int enc_incr = (enc_b_read) ? 1 : -1;
+    encoder_count += enc_incr;
+    num_balls += enc_incr;
+    if (num_balls < 0) {
+        num_balls = 0;
+    } else if (num_balls > MAX_NUM_BALLS) {
+        num_balls = MAX_NUM_BALLS;
+    }
 }
 
 typedef signed int fix15;
@@ -149,8 +157,8 @@ typedef signed int fix15;
 
 #define BALL_RADIUS 4
 #define PEG_RADIUS  6
-#define GRAVITY     float2fix15(0.75)
-#define BOUNCINESS  float2fix15(0.5)
+#define GRAVITY     float2fix15(0.6)
+#define BOUNCINESS  float2fix15(0.3)
 
 typedef struct {
     fix15 x;
@@ -167,14 +175,15 @@ typedef struct {
 
 int histogram[NUM_BINS] = {0};
 
-boid_t ball[10];
+boid_t ball[MAX_NUM_BALLS];
+
 peg_t peg [136];
 char color = WHITE;
 static int last_peg = -1;
 
 void spawnBall(boid_t* b) {
     b->x = int2fix15(320);
-    b->y = int2fix15(10);
+    b->y = float2fix15(56.5);
     b->vx = 0;
     b->vy = 0;
 }
@@ -237,6 +246,7 @@ void updateBallPhysics(boid_t* b) {
             histogram[bin]++;
         }
         spawnBall(b);
+        fallen_balls++;
         return;
     }
 
@@ -296,8 +306,8 @@ void draw_histogram(int* hist) {
         if (height > 0) {
             if (height > HIST_HEIGHT) { 
                 height = HIST_HEIGHT; 
-                normalize_histogram(hist);
             }
+            normalize_histogram(hist);
             fillRect(i * BIN_WIDTH, 480 - height, BIN_WIDTH, height, BLUE);
         }
     }
@@ -310,7 +320,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
     static char buf[16];
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < MAX_NUM_BALLS; i++) {
         spawnBall(&ball[i]);
     }
 
@@ -318,31 +328,53 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         PT_YIELD_UNTIL(pt, draw_start_signal());
         clearLowFrame(0, BLACK);
 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < num_balls; i++) {
             updateBallPhysics(&ball[i]);
         }
 
         for (int i = 0; i < 136; i++) {
             fillCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
-            for (int j = 0; j < 10; j++) {
+            for (int j = 0; j < num_balls; j++) {
                 checkBallCollision(&ball[j], &peg[i]);
             }
         }
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < num_balls; i++) {
             fillCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), BALL_RADIUS, color);
         }
 
         draw_histogram(histogram);
 
         setTextColor(WHITE);
-        setTextSize(3);
-        setCursor(80, 40);
-        sprintf(buf, "%d", encoder_count);
-        writeString(buf);
+        setTextSize(1);
+//
+//        setCursor(1, 50);
+//        sprintf(buf, "Balls: %d", num_balls);
+//        writeString(buf);
+//
+
+       setCursor(1, 60);
+       sprintf(buf, "Total Balls: %d", fallen_balls);
+       writeString(buf);
+//
+//        struct timespec current_time;
+//        aon_timer_get_time(&current_time);
+//
+//        setCursor(1, 70);
+//        sprintf(buf, "seconds since boot: %d", (int)current_time.tv_sec);
+//        writeString(buf);
+        
     }
 
     PT_END(pt);
 }
+
+
+
+struct timespec initial_time = {
+    .tv_sec = 0,
+    .tv_nsec = 0,
+};
+
 
 
 int main() {
@@ -350,6 +382,11 @@ int main() {
     stdio_init_all();
     initVGA();
     init_dma_chirp();
+
+
+    aon_timer_start(&initial_time);
+
+
 
     int peg_index = 0;
     for (int row = 0; row < 16; row++) {

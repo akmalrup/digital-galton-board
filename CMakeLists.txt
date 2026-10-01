@@ -42,6 +42,7 @@ target_sources(VGA_Animation_Demo PRIVATE encoder.c VGA/vga16_graphics_v3.c)
 target_link_libraries(  VGA_Animation_Demo
                         PRIVATE
                         pico_stdlib
+                        pico_aon_timer
                         pico_divider
                         pico_multicore
                         pico_sync
