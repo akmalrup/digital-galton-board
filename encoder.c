@@ -318,7 +318,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 {
     PT_BEGIN(pt);
 
-    static char buf[16];
+    static char buf[48];
 
     for (int i = 0; i < MAX_NUM_BALLS; i++) {
         spawnBall(&ball[i]);
@@ -346,22 +346,23 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
         setTextColor(WHITE);
         setTextSize(1);
-//
-//        setCursor(1, 50);
-//        sprintf(buf, "Balls: %d", num_balls);
-//        writeString(buf);
-//
 
-       setCursor(1, 60);
-       sprintf(buf, "Total Balls: %d", fallen_balls);
-       writeString(buf);
-//
-//        struct timespec current_time;
-//        aon_timer_get_time(&current_time);
-//
-//        setCursor(1, 70);
-//        sprintf(buf, "seconds since boot: %d", (int)current_time.tv_sec);
-//        writeString(buf);
+        setCursor(1, 50);
+        sprintf(buf, "Balls: %d", num_balls);
+        writeString(buf);
+
+
+        setCursor(1, 60);
+        sprintf(buf, "Total Balls: %d", fallen_balls);
+        writeString(buf);
+
+        struct timespec current_time;
+        aon_timer_get_time(&current_time);
+
+        // THIS CAUSES AN ERROR WHEN THE ENCODER SWITCHES, I.E. ON THE GPIO INTERRUPT
+        setCursor(1, 70);
+        sprintf(buf, "seconds since boot: %d", (int)current_time.tv_sec);
+        writeString(buf);
         
     }
 
