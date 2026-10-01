@@ -285,17 +285,17 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     PT_END(pt);
 }
 
-void normalize_histogram(int* hist) {
-    int max = 0;
+int bar_heights[NUM_BINS];
+
+void normalize_histogram(int* hist, int* heights) {
+    int max = 1;
     for (int i = 0; i < NUM_BINS; i++) {
         if (hist[i] > max) {
             max = hist[i];
         }
     }
-    if (max > HIST_HEIGHT) {
-        for (int i = 0; i < NUM_BINS; i++) {
-            hist[i] = (hist[i] * HIST_HEIGHT) / max;
-        }
+    for (int i = 0; i < NUM_BINS; i++) {
+        heights[i] = (hist[i] * HIST_HEIGHT) / max;
     }
 }
 
@@ -310,7 +310,6 @@ void draw_histogram(int* hist) {
         }
     }
 }
-
 
 static PT_THREAD (protothread_anim(struct pt *pt))
 {
