@@ -355,6 +355,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     PT_BEGIN(pt);
 
     static char buf[48];
+    static bool missed = false;  
 
     for (int i = 0; i < MAX_NUM_BALLS; i++) {
         spawnBall(&ball[i]);
@@ -471,6 +472,9 @@ int main() {
     gpio_set_dir(ENC_B, GPIO_IN);
     gpio_pull_up(ENC_A);
     gpio_pull_up(ENC_B);
+
+    gpio_init(LED_PIN);
+    gpio_set_dir(LED_PIN, GPIO_OUT);
 
     gpio_init(LED_PIN);
     gpio_set_dir(LED_PIN, GPIO_OUT);
