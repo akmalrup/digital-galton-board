@@ -47,6 +47,7 @@
 #define ENC_A 14
 #define ENC_B 15
 #define PUSHBUTTON 13
+#define LED_PIN 25
 
 #define BOTH_SHORTED  0
 #define A_SHORTED     1
@@ -139,25 +140,34 @@ typedef signed int fix15;
 #define fix2int15(a) ((int)(a >> 15))
 #define divfix(a,b) (fix15)(div_s64s64((((signed long long)(a)) << 15), ((signed long long)(b))))
 
-#define BALL_RADIUS 4
 #define PEG_RADIUS  6
 
 volatile fix15 gravity = float2fix15(0.6);
 volatile fix15 bounciness = float2fix15(0.3);
 
-#define MAX_NUM_BALLS 256
-volatile int num_balls = 10;
+#define MAX_NUM_BALLS 1024
+volatile int num_balls = 470;
 volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
+
+volatile int ball_radius = 4;
 
 typedef enum {
     BALLS,
     _BOUNCINESS,
     _GRAVITY,
+    _ball_radius,
     MAX_STATE,
 } pusher_state_t;
 
 volatile pusher_state_t pusher_state = BALLS;
+int histogram[NUM_BINS] = {0};
+
+void reset_histogram() {
+    for (int i = 0; i < NUM_BINS; i++) {
+        histogram[i] = 0;
+    }
+}
 
 void gpio_callback(uint gpio, uint32_t event_mask) {
     if (gpio == ENC_A) {
@@ -186,6 +196,14 @@ void gpio_callback(uint gpio, uint32_t event_mask) {
             } else {
                 gravity -= float2fix15(0.01);
             }
+        } else if (pusher_state == _ball_radius) {
+            if (enc_incr > 0) {
+                ball_radius += 1;
+            } else {
+                ball_radius -= 1;
+            }
+            if (ball_radius < 1) ball_radius = 1;
+            if (ball_radius > 10) ball_radius = 10;
             if (gravity < 0) gravity = 0;
             if (gravity > float2fix15(5.0)) gravity = float2fix15(5.0);
         }
@@ -197,6 +215,9 @@ void gpio_callback(uint gpio, uint32_t event_mask) {
             pusher_state = (pusher_state_t)((pusher_state + 1) % MAX_STATE);
         }
     }
+
+    reset_histogram();
+    fallen_balls = 0;
 }
 
 typedef struct {
@@ -212,7 +233,6 @@ typedef struct {
 } peg_t;
 
 
-int histogram[NUM_BINS] = {0};
 
 boid_t ball[MAX_NUM_BALLS];
 
@@ -228,7 +248,7 @@ void spawnBall(boid_t* b) {
 }
 
 void checkBallCollision(boid_t* b, peg_t* p) {
-    fix15 col_dist = int2fix15(BALL_RADIUS + PEG_RADIUS);
+    fix15 col_dist = int2fix15(ball_radius + PEG_RADIUS);
 
     fix15 dx = b->x - p->x;
     fix15 dy = b->y - p->y;
@@ -251,7 +271,7 @@ void checkBallCollision(boid_t* b, peg_t* p) {
 
             fix15 intermediate_term = -2 * (multfix15(normal_x, b->vx) + multfix15(normal_y, b->vy));
 
-            fix15 teleport_dist = int2fix15(PEG_RADIUS + BALL_RADIUS + 1);
+            fix15 teleport_dist = int2fix15(PEG_RADIUS + ball_radius);
             b->x = p->x + multfix15(normal_x, teleport_dist);
             b->y = p->y + multfix15(normal_y, teleport_dist);
 
@@ -278,7 +298,7 @@ void updateBallPhysics(boid_t* b) {
     b->x += b->vx;
     b->y += b->vy;
 
-    if (b->y > int2fix15(480 - BALL_RADIUS)) {
+    if (b->y > int2fix15(480 - ball_radius)) {
         int x_pixel = fix2int15(b->x);
         int bin = x_pixel / BIN_WIDTH;
         if (x_pixel >= 0 && bin >= 0 && bin < NUM_BINS) {
@@ -289,17 +309,17 @@ void updateBallPhysics(boid_t* b) {
         return;
     }
 
-    if (b->x < int2fix15(35 + BALL_RADIUS)) {
+    if (b->x < int2fix15(35 + ball_radius)) {
         b->vx = -b->vx;
-        b->x = int2fix15(35 + BALL_RADIUS);
-    } else if (b->x > int2fix15(605 - BALL_RADIUS)) {
+        b->x = int2fix15(35 + ball_radius);
+    } else if (b->x > int2fix15(605 - ball_radius)) {
         b->vx = -b->vx;
-        b->x = int2fix15(605 - BALL_RADIUS);
+        b->x = int2fix15(605 - ball_radius);
     }
 
-    if (b->y < int2fix15(BALL_RADIUS)) {
+    if (b->y < int2fix15(ball_radius)) {
         b->vy = -b->vy;
-        b->y = int2fix15(BALL_RADIUS);
+        b->y = int2fix15(ball_radius);
     }
 
     b->vy += gravity;
@@ -347,8 +367,17 @@ void draw_histogram(int* hist) {
             fillRect(HIST_LEFT + i * BIN_WIDTH, 480 - bar_heights[i],
                      BIN_WIDTH - 2, bar_heights[i], BLUE);
         }
+        // print count at bin
+
+        char buf[32];
+        setTextColor(WHITE);
+        setCursor(HIST_LEFT + i * BIN_WIDTH, 480 - bar_heights[i] - 10);
+        sprintf(buf, "%d", histogram[i]);
+        writeString(buf);
     }
 }
+
+
 
 static PT_THREAD (protothread_anim(struct pt *pt))
 {
@@ -378,7 +407,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
             }
         }
         for (int i = 0; i < num_balls; i++) {
-            fillCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), BALL_RADIUS, color);
+            fillCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), ball_radius, color);
         }
 
         draw_histogram(histogram);
@@ -424,9 +453,14 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         sprintf(buf, "Gravity: %d.%02d", grav_whole, grav_hundredths);
         writeString(buf);
 
-        if (time_us_32() - start > 16667) {  
-            missed = true;
-        }
+        // 6. Ball Radius (active selection highlight)
+        setTextColor(pusher_state == _ball_radius ? BLUE : WHITE);
+        setCursor(1, 100);
+        sprintf(buf, "Ball Radius: %d", ball_radius);
+        writeString(buf);
+
+        missed = time_us_32() - start > 16667;
+
         gpio_put(LED_PIN, missed);
         
     }
