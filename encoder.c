@@ -80,12 +80,11 @@ __attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 #define HIST_HEIGHT 80
 #define NUM_BINS    17
 #define BIN_WIDTH   (640 / NUM_BINS)
+#define HIST_LEFT 10
 
 int data_chan;
 
 void dma_chirp(void) {
-    dma_channel_abort(data_chan);
-    dma_channel_set_read_addr(data_chan, DAC_data, false);
     dma_channel_set_trans_count(data_chan, CHIRP_SAMPLES, true);
 }
 
