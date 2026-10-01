@@ -72,6 +72,13 @@ __attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 #define PIN_MOSI 7
 #define SPI_PORT spi0
 
+
+// histogram 
+
+#define HIST_HEIGHT 80
+#define NUM_BINS    10
+#define BIN_WIDTH   (640 / NUM_BINS)
+
 int data_chan;
 
 void dma_chirp(void) {
@@ -142,42 +149,41 @@ typedef signed int fix15;
 
 #define BALL_RADIUS 4
 #define PEG_RADIUS  6
-#define GRAVITY     float2fix15(0.37)
+#define GRAVITY     float2fix15(0.75)
 #define BOUNCINESS  float2fix15(0.5)
 
 typedef struct {
-    int x;
-    int y;
+    fix15 x;
+    fix15 y;
     fix15 vx;
     fix15 vy;
 } boid_t;
 
 typedef struct {
-    int x;
-    int y;
+    fix15 x;
+    fix15 y;
 } peg_t;
 
-boid_t ball;
+
+int histogram[NUM_BINS] = {0};
+
+boid_t ball[10];
 peg_t peg [136];
 char color = WHITE;
+static int last_peg = -1;
 
 void spawnBall(boid_t* b) {
-    b->x = 320;
-    b->y = 10;
+    b->x = int2fix15(320);
+    b->y = int2fix15(10);
     b->vx = 0;
     b->vy = 0;
 }
 
-void updateBall(boid_t* b, peg_t* p) {
-    b->x += fix2int15(b->vx);
-    b->y += fix2int15(b->vy);
-
-    fix15 dx = int2fix15(b->x - p->x);
-    fix15 dy = int2fix15(b->y - p->y);
+void checkBallCollision(boid_t* b, peg_t* p) {
     fix15 col_dist = int2fix15(BALL_RADIUS + PEG_RADIUS);
 
-    static int last_peg = -1;
-    int colliding = 0;
+    fix15 dx = b->x - p->x;
+    fix15 dy = b->y - p->y;
 
     if (absfix15(dx) < col_dist && absfix15(dy) < col_dist) {
         float fdx = fix2float15(dx);
@@ -186,7 +192,6 @@ void updateBall(boid_t* b, peg_t* p) {
         fix15 distance = float2fix15(fdist);
 
         if (distance > 0 && distance < col_dist) {
-            colliding = 1;
 
             if (fabsf(fdx) < 0.5f) {
                 fdx = (rand() & 1) ? 2.0f : -2.0f;
@@ -199,50 +204,53 @@ void updateBall(boid_t* b, peg_t* p) {
             fix15 intermediate_term = -2 * (multfix15(normal_x, b->vx) + multfix15(normal_y, b->vy));
 
             fix15 teleport_dist = int2fix15(PEG_RADIUS + BALL_RADIUS + 1);
-            b->x = p->x + fix2int15(multfix15(normal_x, teleport_dist));
-            b->y = p->y + fix2int15(multfix15(normal_y, teleport_dist));
+            b->x = p->x + multfix15(normal_x, teleport_dist);
+            b->y = p->y + multfix15(normal_y, teleport_dist);
 
             if (intermediate_term > 0) {
                 b->vx += multfix15(normal_x, intermediate_term);
                 b->vy += multfix15(normal_y, intermediate_term);
             }
 
-            int current_peg = 0;
-            if (current_peg != last_peg) {
-                b->vx = multfix15(BOUNCINESS, b->vx);
-                b->vy = multfix15(BOUNCINESS, b->vy);
+            b->vx = multfix15(BOUNCINESS, b->vx);
+            b->vy = multfix15(BOUNCINESS, b->vy);
 
-                fix15 impulse = (rand() & 1) ? float2fix15(0.2) : float2fix15(-0.2);
-                b->vx += impulse;
+            fix15 impulse = (rand() & 1) ? float2fix15(0.2) : float2fix15(-0.2);
+            b->vx += impulse;
 
-                dma_chirp();
+            dma_chirp();
 
-                last_peg = current_peg;
-            }
         }
-    }
-
-    if (!colliding) {
-        last_peg = -1;
-    }
-
-    if (b->y > 480 - BALL_RADIUS) {
-        spawnBall(b);
-        last_peg = -1;
         return;
     }
 
-    if (b->x < 35 + BALL_RADIUS) {
-        b->vx = -b->vx;
-        b->x = 35 + BALL_RADIUS;
-    } else if (b->x > 605 - BALL_RADIUS) {
-        b->vx = -b->vx;
-        b->x = 605 - BALL_RADIUS;
+}
+
+void updateBallPhysics(boid_t* b) {
+    b->x += b->vx;
+    b->y += b->vy;
+
+    if (b->y > int2fix15(480 - BALL_RADIUS)) {
+        int x_pixel = fix2int15(b->x);
+        int bin = x_pixel / BIN_WIDTH;
+        if (x_pixel >= 0 && bin >= 0 && bin < NUM_BINS) {
+            histogram[bin]++;
+        }
+        spawnBall(b);
+        return;
     }
 
-    if (b->y < 100 + BALL_RADIUS) {
+    if (b->x < int2fix15(35 + BALL_RADIUS)) {
+        b->vx = -b->vx;
+        b->x = int2fix15(35 + BALL_RADIUS);
+    } else if (b->x > int2fix15(605 - BALL_RADIUS)) {
+        b->vx = -b->vx;
+        b->x = int2fix15(605 - BALL_RADIUS);
+    }
+
+    if (b->y < int2fix15(BALL_RADIUS)) {
         b->vy = -b->vy;
-        b->y = 100 + BALL_RADIUS;
+        b->y = int2fix15(BALL_RADIUS);
     }
 
     b->vy += GRAVITY;
@@ -267,25 +275,64 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     PT_END(pt);
 }
 
+void normalize_histogram(int* hist) {
+    int max = 0;
+    for (int i = 0; i < NUM_BINS; i++) {
+        if (hist[i] > max) {
+            max = hist[i];
+        }
+    }
+    if (max > HIST_HEIGHT) {
+        for (int i = 0; i < NUM_BINS; i++) {
+            hist[i] = (hist[i] * HIST_HEIGHT) / max;
+        }
+    }
+}
+
+
+void draw_histogram(int* hist) {
+    for (int i = 0; i < NUM_BINS; i++) {
+        int height = hist[i];
+        if (height > 0) {
+            if (height > HIST_HEIGHT) { 
+                height = HIST_HEIGHT; 
+                normalize_histogram(hist);
+            }
+            fillRect(i * BIN_WIDTH, 480 - height, BIN_WIDTH, height, BLUE);
+        }
+    }
+}
+
+
 static PT_THREAD (protothread_anim(struct pt *pt))
 {
     PT_BEGIN(pt);
 
     static char buf[16];
 
-    spawnBall(&ball);
+    for (int i = 0; i < 10; i++) {
+        spawnBall(&ball[i]);
+    }
 
     while (1) {
         PT_YIELD_UNTIL(pt, draw_start_signal());
         clearLowFrame(0, BLACK);
 
-
-        updateBall(&ball, &peg[0]);
+        for (int i = 0; i < 10; i++) {
+            updateBallPhysics(&ball[i]);
+        }
 
         for (int i = 0; i < 136; i++) {
-            fillCircle(peg[i].x, peg[i].y, PEG_RADIUS, WHITE);
+            fillCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
+            for (int j = 0; j < 10; j++) {
+                checkBallCollision(&ball[j], &peg[i]);
+            }
         }
-        fillCircle(ball.x, ball.y, BALL_RADIUS, color);
+        for (int i = 0; i < 10; i++) {
+            fillCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), BALL_RADIUS, color);
+        }
+
+        draw_histogram(histogram);
 
         setTextColor(WHITE);
         setTextSize(3);
@@ -309,8 +356,8 @@ int main() {
         for (int column = 0; column <= row; column++) {
             int x = 320 + (2 * column - row) * 19;
             int y = 100 + row * 19;
-            peg[peg_index].x = x;
-            peg[peg_index].y = y;
+            peg[peg_index].x = int2fix15(x);
+            peg[peg_index].y = int2fix15(y);
             peg_index++;
         }
     }
