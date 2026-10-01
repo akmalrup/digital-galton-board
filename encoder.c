@@ -301,14 +301,12 @@ void normalize_histogram(int* hist) {
 
 
 void draw_histogram(int* hist) {
+    normalize_histogram(hist, bar_heights);
+
     for (int i = 0; i < NUM_BINS; i++) {
-        int height = hist[i];
-        if (height > 0) {
-            if (height > HIST_HEIGHT) { 
-                height = HIST_HEIGHT; 
-            }
-            normalize_histogram(hist);
-            fillRect(i * BIN_WIDTH, 480 - height, BIN_WIDTH, height, BLUE);
+        if (bar_heights[i] > 0) {
+            fillRect(HIST_LEFT + i * BIN_WIDTH, 480 - bar_heights[i],
+                     BIN_WIDTH - 2, bar_heights[i], BLUE);
         }
     }
 }
