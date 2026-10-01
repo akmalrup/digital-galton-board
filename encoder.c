@@ -45,7 +45,6 @@
 #define ENC_A 14
 #define ENC_B 15
 #define IRQ_SIG 13
-#define TRANSITIONS_PER_CLICK 4
 
 #define BOTH_SHORTED  0
 #define A_SHORTED     1
@@ -159,12 +158,12 @@ typedef struct {
 } peg_t;
 
 boid_t ball;
-peg_t peg;
+peg_t peg [136];
 char color = WHITE;
 
 void spawnBall(boid_t* b) {
     b->x = int2fix15(320);
-    b->y = int2fix15(115);
+    b->y = int2fix15(5);
     b->vx = 0;
     b->vy = 0;
 }
@@ -233,12 +232,12 @@ void updateBall(boid_t* b, peg_t* p) {
         return;
     }
 
-    if (b->x < int2fix15(100 + BALL_RADIUS)) {
+    if (b->x < int2fix15(35 + BALL_RADIUS)) {
         b->vx = -b->vx;
-        b->x = int2fix15(100 + BALL_RADIUS);
-    } else if (b->x > int2fix15(540 - BALL_RADIUS)) {
+        b->x = int2fix15(35 + BALL_RADIUS);
+    } else if (b->x > int2fix15(605 - BALL_RADIUS)) {
         b->vx = -b->vx;
-        b->x = int2fix15(540 - BALL_RADIUS);
+        b->x = int2fix15(605 - BALL_RADIUS);
     }
 
     if (b->y < int2fix15(100 + BALL_RADIUS)) {
@@ -280,9 +279,11 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         PT_YIELD_UNTIL(pt, draw_start_signal());
         clearLowFrame(0, BLACK);
 
-        updateBall(&ball, &peg);
 
-        fillCircle(fix2int15(peg.x), fix2int15(peg.y), PEG_RADIUS, WHITE);
+        for (int i = 0; i < 136; i++) {
+            updateBall(&ball, &peg[i]);
+            fillCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
+        }
         fillCircle(fix2int15(ball.x), fix2int15(ball.y), BALL_RADIUS, color);
 
         setTextColor(WHITE);
@@ -301,8 +302,17 @@ int main() {
     initVGA();
     init_dma_chirp();
 
-    peg.x = int2fix15(320);
-    peg.y = int2fix15(240);
+    int peg_index = 0;
+    for (int row = 0; row < 16; row++) {
+        for (int column = 0; column <= row; column++) {
+            int x = 320 + (2 * column - row) * 19;
+            int y = 100 + row * 19;
+            peg[peg_index].x = int2fix15(x);
+            peg[peg_index].y = int2fix15(y);
+            peg_index++;
+        }
+    }
+
 
     gpio_init(ENC_A);
     gpio_init(ENC_B);
