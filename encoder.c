@@ -46,7 +46,7 @@
 //
 #define ENC_A 14
 #define ENC_B 15
-#define IRQ_SIG 13
+#define PUSHBUTTON 13
 
 #define BOTH_SHORTED  0
 #define A_SHORTED     1
@@ -90,7 +90,9 @@ void dma_chirp(void) {
 
 void init_dma_chirp(void) {
     for (int i = 0; i < sine_table_size; i++) {
-        int raw_sin = (int)(2047.0 * sin((float)i * 6.28318530718 / (float)sine_table_size) + 2047.0);
+        float progress = (float)i / (float)sine_table_size;
+        float envelope = (1.0f - progress) * expf(-2.5f * progress);
+        int raw_sin = 2048 + (int)(2047.0f * envelope * sinf((float)i * 6.28318530718f / (float)sine_table_size));
         DAC_data[i] = (unsigned short)(DAC_config_chan_A | (raw_sin & 0x0FFF));
     }
 
@@ -128,23 +130,6 @@ void init_dma_chirp(void) {
 }
 
 
-#define MAX_NUM_BALLS 256
-volatile int num_balls = 10;
-volatile int fallen_balls = 0;
-volatile int encoder_count = 0;
-
-void gpio_callback(uint gpio, uint32_t event_mask) {
-    int enc_b_read = gpio_get(ENC_B);
-    int enc_incr = (enc_b_read) ? 1 : -1;
-    encoder_count += enc_incr;
-    num_balls += enc_incr;
-    if (num_balls < 0) {
-        num_balls = 0;
-    } else if (num_balls > MAX_NUM_BALLS) {
-        num_balls = MAX_NUM_BALLS;
-    }
-}
-
 typedef signed int fix15;
 #define multfix15(a,b) ((fix15)((((signed long long)(a))*((signed long long)(b)))>>15))
 #define float2fix15(a) ((fix15)((a)*32768.0))
@@ -156,8 +141,63 @@ typedef signed int fix15;
 
 #define BALL_RADIUS 4
 #define PEG_RADIUS  6
-#define GRAVITY     float2fix15(0.6)
-#define BOUNCINESS  float2fix15(0.3)
+
+volatile fix15 gravity = float2fix15(0.6);
+volatile fix15 bounciness = float2fix15(0.3);
+
+#define MAX_NUM_BALLS 256
+volatile int num_balls = 10;
+volatile int fallen_balls = 0;
+volatile int encoder_count = 0;
+
+typedef enum {
+    BALLS,
+    _BOUNCINESS,
+    _GRAVITY,
+    MAX_STATE,
+} pusher_state_t;
+
+volatile pusher_state_t pusher_state = BALLS;
+
+void gpio_callback(uint gpio, uint32_t event_mask) {
+    if (gpio == ENC_A) {
+        int enc_b_read = gpio_get(ENC_B);
+        int enc_incr = (enc_b_read) ? 1 : -1;
+        encoder_count += enc_incr;
+
+        if (pusher_state == BALLS) {
+            num_balls += enc_incr;
+            if (num_balls < 0) {
+                num_balls = 0;
+            } else if (num_balls > MAX_NUM_BALLS) {
+                num_balls = MAX_NUM_BALLS;
+            }
+        } else if (pusher_state == _BOUNCINESS) {
+            if (enc_incr > 0) {
+                bounciness += float2fix15(0.01);
+            } else {
+                bounciness -= float2fix15(0.01);
+            }
+            if (bounciness < 0) bounciness = 0;
+            if (bounciness > float2fix15(1.0)) bounciness = float2fix15(1.0);
+        } else if (pusher_state == _GRAVITY) {
+            if (enc_incr > 0) {
+                gravity += float2fix15(0.01);
+            } else {
+                gravity -= float2fix15(0.01);
+            }
+            if (gravity < 0) gravity = 0;
+            if (gravity > float2fix15(5.0)) gravity = float2fix15(5.0);
+        }
+    } else if (gpio == PUSHBUTTON) {
+        static uint64_t last_press_time = 0;
+        uint64_t now = to_us_since_boot(get_absolute_time());
+        if (now - last_press_time > 200000) {
+            last_press_time = now;
+            pusher_state = (pusher_state_t)((pusher_state + 1) % MAX_STATE);
+        }
+    }
+}
 
 typedef struct {
     fix15 x;
@@ -220,8 +260,8 @@ void checkBallCollision(boid_t* b, peg_t* p) {
                 b->vy += multfix15(normal_y, intermediate_term);
             }
 
-            b->vx = multfix15(BOUNCINESS, b->vx);
-            b->vy = multfix15(BOUNCINESS, b->vy);
+            b->vx = multfix15(bounciness, b->vx);
+            b->vy = multfix15(bounciness, b->vy);
 
             fix15 impulse = (rand() & 1) ? float2fix15(0.2) : float2fix15(-0.2);
             b->vx += impulse;
@@ -262,7 +302,7 @@ void updateBallPhysics(boid_t* b) {
         b->y = int2fix15(BALL_RADIUS);
     }
 
-    b->vy += GRAVITY;
+    b->vy += gravity;
 }
 
 static PT_THREAD (protothread_serial(struct pt *pt))
@@ -340,24 +380,45 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
         draw_histogram(histogram);
 
-        setTextColor(WHITE);
         setTextSize(1);
 
+        // 1. Total Balls
+        setTextColor(WHITE);
         setCursor(1, 50);
-        sprintf(buf, "Balls: %d", num_balls);
-        writeString(buf);
-
-
-        setCursor(1, 60);
         sprintf(buf, "Total Balls: %d", fallen_balls);
         writeString(buf);
 
+        // 2. Seconds since boot
         struct timespec current_time;
         aon_timer_get_time(&current_time);
-
-        // THIS CAUSES AN ERROR WHEN THE ENCODER SWITCHES, I.E. ON THE GPIO INTERRUPT
-        setCursor(1, 70);
+        setCursor(1, 60);
         sprintf(buf, "seconds since boot: %d", (int)current_time.tv_sec);
+        writeString(buf);
+
+        // 3. Balls (active selection highlight)
+        setTextColor(pusher_state == BALLS ? BLUE : WHITE);
+        setCursor(1, 70);
+        sprintf(buf, "Balls: %d", num_balls);
+        writeString(buf);
+
+        // 4. Bounciness (active selection highlight)
+        float f_bounce = fix2float15(bounciness);
+        int bounce_whole = (int)f_bounce;
+        int bounce_hundredths = (int)((f_bounce - bounce_whole) * 100.0f + 0.5f);
+        if (bounce_hundredths < 0) bounce_hundredths = -bounce_hundredths;
+        setTextColor(pusher_state == _BOUNCINESS ? BLUE : WHITE);
+        setCursor(1, 80);
+        sprintf(buf, "Bounciness: %d.%02d", bounce_whole, bounce_hundredths);
+        writeString(buf);
+
+        // 5. Gravity (active selection highlight)
+        float f_grav = fix2float15(gravity);
+        int grav_whole = (int)f_grav;
+        int grav_hundredths = (int)((f_grav - grav_whole) * 100.0f + 0.5f);
+        if (grav_hundredths < 0) grav_hundredths = -grav_hundredths;
+        setTextColor(pusher_state == _GRAVITY ? BLUE : WHITE);
+        setCursor(1, 90);
+        sprintf(buf, "Gravity: %d.%02d", grav_whole, grav_hundredths);
         writeString(buf);
         
     }
@@ -399,17 +460,22 @@ int main() {
 
     gpio_init(ENC_A);
     gpio_init(ENC_B);
-    gpio_init(IRQ_SIG);
     gpio_set_dir(ENC_A, GPIO_IN);
     gpio_set_dir(ENC_B, GPIO_IN);
-    gpio_set_dir(IRQ_SIG, GPIO_OUT);
     gpio_pull_up(ENC_A);
     gpio_pull_up(ENC_B);
 
 
+    gpio_init(PUSHBUTTON);
+    gpio_set_dir(PUSHBUTTON, GPIO_IN);
+    gpio_pull_up(PUSHBUTTON);
+
     gpio_set_irq_enabled_with_callback(ENC_A,
         GPIO_IRQ_EDGE_FALL, true, &gpio_callback);
+    gpio_set_irq_enabled(PUSHBUTTON,
+        GPIO_IRQ_EDGE_FALL, true);
 
+    
     pt_add_thread(protothread_serial);
     pt_add_thread(protothread_anim);
 
