@@ -83,13 +83,6 @@ void clearLowFrame(short, short) ;
 void clearRegion(short y1, short y2, short c) ;
 
 // ====================
-// 1-bit framebuffers (640 px / 8 = 80 bytes per row) and the buffer the
-// DMA currently says to draw into
-extern unsigned char vga_buffer_0[] ;
-extern unsigned char vga_buffer_1[] ;
-extern char * current_draw_buffer ;
-
-// ====================
 // buffer handling
 // Static text needs to be duplicated into both buffers
 // copy buffer 0 to 1 and 1 to 0
