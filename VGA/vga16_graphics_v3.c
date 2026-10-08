@@ -521,6 +521,16 @@ void drawCircle(short x0, short y0, short r, char color) {
  *          isn't filled. So, this is the color of the outline of the circle
  * Returns: Nothing
  */
+  // r = 1 fast path: the general algorithm only produces these 4 pixels
+  // (it redraws each of them twice more in its single loop pass)
+  if (r == 1) {
+    drawPixel(x0  , y0+1, color);
+    drawPixel(x0  , y0-1, color);
+    drawPixel(x0+1, y0  , color);
+    drawPixel(x0-1, y0  , color);
+    return;
+  }
+
   short f = 1 - r;
   short ddF_x = 1;
   short ddF_y = -2 * r;
