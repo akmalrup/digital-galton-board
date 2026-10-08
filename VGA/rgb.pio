@@ -6,23 +6,23 @@
 
 ; Program name
 .program rgb
-.define PUBLIC vid_freq 150
+.define PUBLIC vid_freq 200
 
 .wrap_target
 
 mov x, isr [1]           ; Reload 639; finish the last pixel before blanking
 set pins, 0 				; Zero RGB pins in blanking
-wait 1 irq 1 [2]         ; Align the first color SET with active video
+wait 1 irq 1 [3]         ; Align the first color SET with active video
 
 colorout:
     out y, 1             ; Extract one bit; autopull reloads OSR after eight bits
     jmp !y black         ; Bit 0 -> black
 
-    set pins, 15 [1]     ; Bit 1 -> white
+    set pins, 15 [3]     ; Bit 1 -> white (8 cycles/pixel @ 200MHz)
     jmp nextpixel
 
 black:
-    set pins, 0 [2]
+    set pins, 0 [4]      ; Bit 0 -> black (8 cycles/pixel @ 200MHz)
 
 nextpixel:
     jmp x-- colorout     ; Same counter register as original

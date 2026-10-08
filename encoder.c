@@ -149,8 +149,8 @@ typedef signed int fix15;
 volatile fix15 gravity = float2fix15(0.6);
 volatile fix15 bounciness = float2fix15(0.3);
 
-#define MAX_NUM_BALLS 10000
-volatile int num_balls = 10000;
+#define MAX_NUM_BALLS 24000
+volatile int num_balls = 18000;
 volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
 
@@ -395,24 +395,6 @@ static inline void checkNearbyPegs(boid_t* this_ball) {
     }
 }
 
-static PT_THREAD (protothread_serial(struct pt *pt))
-{
-    PT_BEGIN(pt);
-    static int user_input;
-    PT_YIELD_usec(1000000);
-    sprintf(pt_serial_out_buffer, "Protothreads RP2040 v1.4\n\r");
-    serial_write;
-    while (1) {
-        sprintf(pt_serial_out_buffer, "input a number in the range 1-15: ");
-        serial_write;
-        serial_read;
-        sscanf(pt_serial_in_buffer, "%d", &user_input);
-        if (user_input > 0 && user_input < 16) {
-            color = (char)user_input;
-        }
-    }
-    PT_END(pt);
-}
 
 int bar_heights[NUM_BINS];
 
@@ -627,7 +609,7 @@ struct timespec initial_time = {
 
 
 int main() {
-    set_sys_clock_khz(150000, true);
+    set_sys_clock_khz(200000, true);
     stdio_init_all();
     initVGA();
     init_dma_chirp();
@@ -677,7 +659,6 @@ int main() {
     multicore_reset_core1();
     multicore_launch_core1(core1_main);
 
-    pt_add_thread(protothread_serial);
     pt_add_thread(protothread_anim);
 
     pt_schedule_start;
