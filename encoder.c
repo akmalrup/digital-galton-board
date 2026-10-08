@@ -256,7 +256,14 @@ void spawnBall(boid_t* b) {
 static inline fix15 dist_amax_bmin(fix15 dx, fix15 dy) {
     fix15 ax = absfix15(dx);
     fix15 ay = absfix15(dy);
-    return (ax > ay) ? ax + (ay >> 1) : ay + (ax >> 1);
+    fix15 val = (ax > ay) ? ax + (ay >> 1) : ay + (ax >> 1);
+
+    // stochastic rounding
+    if ((rand() & 0x7FFF) < (absfix15(dx) + absfix15(dy)) & 0x7FFF) {
+        val++;
+    }
+
+    return val;
 }
 
 void checkBallCollision(boid_t* b, peg_t* p) {
