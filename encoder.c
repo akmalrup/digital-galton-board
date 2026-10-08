@@ -419,13 +419,15 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         uint32_t start = time_us_32(); 
         clearLowFrame(0, BLACK);
 
-        // Signal Core 1 to compute physics in parallel
-        sem_release(&sem_physics_start);
+       
 
         // Core 0 draws pegs while Core 1 calculates physics
         for (int i = 0; i < 136; i++) {
             fillCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
         }
+
+         // Signal Core 1 to compute physics in parallel
+         sem_release(&sem_physics_start);
 
         // Core 0 draws histogram and UI while Core 1 calculates physics
         draw_histogram(histogram);
