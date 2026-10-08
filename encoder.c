@@ -83,7 +83,9 @@ __attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 #define HIST_HEIGHT 80
 #define NUM_BINS    17
 #define BIN_WIDTH   38
-#define HIST_LEFT -2
+// x of bin 0's left edge. Chosen so the middle bin (8) spans [301, 339),
+// centered on the board's center x = 320, with bin edges on the bottom-row pegs
+#define HIST_LEFT   (320 - BIN_WIDTH / 2 - (NUM_BINS / 2) * BIN_WIDTH)
 
 int data_chan;
 
@@ -256,14 +258,7 @@ void spawnBall(boid_t* b) {
 static inline fix15 dist_amax_bmin(fix15 dx, fix15 dy) {
     fix15 ax = absfix15(dx);
     fix15 ay = absfix15(dy);
-    fix15 val = (ax > ay) ? ax + (ay >> 1) : ay + (ax >> 1);
-
-    // stochastic rounding
-    if ((rand() & 0x7FFF) < (absfix15(dx) + absfix15(dy)) & 0x7FFF) {
-        val++;
-    }
-
-    return val;
+    return (ax > ay) ? ax + (ay >> 1) : ay + (ax >> 1);
 }
 
 void checkBallCollision(boid_t* b, peg_t* p) {
@@ -315,7 +310,7 @@ void updateBallPhysics(boid_t* b) {
 
     if (b->y > int2fix15(480 - ball_radius)) {
         int x_pixel = fix2int15(b->x);
-        int bin = x_pixel / BIN_WIDTH;
+        int bin = (x_pixel - HIST_LEFT) / BIN_WIDTH;
         if (x_pixel >= 0 && bin >= 0 && bin < NUM_BINS) {
             histogram[bin]++;
         }
