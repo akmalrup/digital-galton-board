@@ -147,8 +147,8 @@ typedef signed int fix15;
 volatile fix15 gravity = float2fix15(0.6);
 volatile fix15 bounciness = float2fix15(0.3);
 
-#define MAX_NUM_BALLS 5000
-volatile int num_balls = 470;
+#define MAX_NUM_BALLS 10000
+volatile int num_balls = 5000;
 volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
 
@@ -336,9 +336,9 @@ void updateBallPhysics(boid_t* b) {
 }
 
 // Peg grid layout (must match the peg setup loop in main):
-//   row r (0..15) is at          y = PEG_TOP_Y + r * PEG_SPACING
-//   peg c (0..r) in row r is at  x = PEG_CENTER_X + (2c - r) * PEG_SPACING
-//   index of peg (r, c) in peg[] = r*(r+1)/2 + c   (rows stored back to back)
+//   row number `row` (0..15) is at   y = PEG_TOP_Y + row * PEG_SPACING
+//   peg `col` (0..row) in that row:  x = PEG_CENTER_X + (2*col - row) * PEG_SPACING
+//   position of that peg in peg[]  = row*(row+1)/2 + col  (rows stored back to back)
 #define PEG_ROWS      16
 #define PEG_TOP_Y     100
 #define PEG_CENTER_X  320
@@ -348,44 +348,50 @@ void updateBallPhysics(boid_t* b) {
 // instead of looping over all 136 pegs.
 //
 // A ball can only hit a peg if its center is within
-// reach = ball_radius + PEG_RADIUS (at most 16 px) of the peg center.
+// touch_distance = ball_radius + PEG_RADIUS (at most 16 px) of the peg center.
 //  - Rows are 19 px apart, so at most 2 rows are close enough vertically.
 //  - Pegs in a row are 38 px apart, so only the nearest peg in each row
 //    can be close enough horizontally.
 // So each ball needs at most 2 calls to checkBallCollision, which still
 // does the exact distance test.
-static inline void checkNearbyPegs(boid_t* b) {
-    // Ball position in whole pixels
-    int bx = fix2int15(b->x);
-    int by = fix2int15(b->y);
-    int reach = ball_radius + PEG_RADIUS;
+static inline void checkNearbyPegs(boid_t* this_ball) {
+    // Ball center position in whole pixels
+    int ball_x = fix2int15(this_ball->x);
+    int ball_y = fix2int15(this_ball->y);
+
+    // Ball and peg touch when their centers are closer than this
+    int touch_distance = ball_radius + PEG_RADIUS;
 
     // Ball is completely above the first row or below the last row
-    if (by + reach < PEG_TOP_Y) return;
-    if (by - reach > PEG_TOP_Y + (PEG_ROWS - 1) * PEG_SPACING) return;
+    if (ball_y + touch_distance < PEG_TOP_Y) return;
+    if (ball_y - touch_distance > PEG_TOP_Y + (PEG_ROWS - 1) * PEG_SPACING) return;
 
-    // Find the rows whose y falls within [by - reach, by + reach].
-    // row_lo rounds up and row_hi rounds down, so only rows inside that
+    // Find the rows whose y falls within
+    // [ball_y - touch_distance, ball_y + touch_distance].
+    // first_row rounds up and last_row rounds down, so only rows inside that
     // band are included. (C integer division truncates toward zero, which
-    // rounds up for the negative values row_lo can get here.)
-    int row_lo = (by - reach - PEG_TOP_Y + PEG_SPACING - 1) / PEG_SPACING;
-    int row_hi = (by + reach - PEG_TOP_Y) / PEG_SPACING;
-    if (row_lo < 0)            row_lo = 0;
-    if (row_hi > PEG_ROWS - 1) row_hi = PEG_ROWS - 1;
+    // rounds up for the negative values first_row can get here.)
+    int first_row = (ball_y - touch_distance - PEG_TOP_Y + PEG_SPACING - 1) / PEG_SPACING;
+    int last_row  = (ball_y + touch_distance - PEG_TOP_Y) / PEG_SPACING;
+    if (first_row < 0)            first_row = 0;
+    if (last_row > PEG_ROWS - 1)  last_row = PEG_ROWS - 1;
 
-    for (int r = row_lo; r <= row_hi; r++) {
-        // Leftmost peg in row r is at x = PEG_CENTER_X - r * PEG_SPACING,
+    for (int row = first_row; row <= last_row; row++) {
+        // Leftmost peg in this row is at x = PEG_CENTER_X - row * PEG_SPACING,
         // and each next peg is 2 * PEG_SPACING to the right. Adding half
         // that gap (PEG_SPACING) before dividing rounds to the nearest column.
-        int row_left_x = PEG_CENTER_X - r * PEG_SPACING;
-        int c = (bx - row_left_x + PEG_SPACING) / (2 * PEG_SPACING);
+        int leftmost_peg_x = PEG_CENTER_X - row * PEG_SPACING;
+        int nearest_col = (ball_x - leftmost_peg_x + PEG_SPACING) / (2 * PEG_SPACING);
 
-        // Keep c on a peg that exists (row r has r + 1 pegs)
-        if (c < 0) c = 0;
-        if (c > r) c = r;
+        // Keep nearest_col on a peg that exists (this row has row + 1 pegs)
+        if (nearest_col < 0)   nearest_col = 0;
+        if (nearest_col > row) nearest_col = row;
+
+        // Where that peg sits in the peg[] array
+        int peg_index = row * (row + 1) / 2 + nearest_col;
 
         // Exact collision test against that one peg
-        checkBallCollision(b, &peg[r * (r + 1) / 2 + c]);
+        checkBallCollision(this_ball, &peg[peg_index]);
     }
 }
 
