@@ -104,6 +104,9 @@ __attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 
 // UI and histogram refresh period: 20 Hz
 #define UI_PERIOD_US 50000
+// A UI thread counts as late (LED on) if it hasn't finished a pass this long
+// after its previous one: one period of sleep plus one period to draw
+#define UI_LATE_US   (2 * UI_PERIOD_US)
 
 int data_chan;
 
@@ -168,7 +171,7 @@ volatile fix15 gravity = float2fix15(0.6);
 volatile fix15 bounciness = float2fix15(0.3);
 
 #define MAX_NUM_BALLS 24000
-volatile int num_balls = 12000;
+volatile int num_balls = 13000;
 volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
 
@@ -280,7 +283,7 @@ static inline fix15 dist_amax_bmin(fix15 dx, fix15 dy) {
 }
 
 void checkBallCollision(boid_t* b, peg_t* p) {
-    fix15 col_dist = int2fix15(ball_radius + PEG_RADIUS);
+    fix15 col_dist = int2fix15(ball_radius + PEG_RADIUS+1);
 
     fix15 dx = b->x - p->x;
     fix15 dy = b->y - p->y;
@@ -413,25 +416,6 @@ static inline void checkNearbyPegs(boid_t* this_ball) {
     }
 }
 
-static PT_THREAD (protothread_serial(struct pt *pt))
-{
-    PT_BEGIN(pt);
-    static int user_input;
-    PT_YIELD_usec(1000000);
-    sprintf(pt_serial_out_buffer, "Protothreads RP2040 v1.4\n\r");
-    serial_write;
-    while (1) {
-        sprintf(pt_serial_out_buffer, "input a number in the range 1-15: ");
-        serial_write;
-        serial_read;
-        sscanf(pt_serial_in_buffer, "%d", &user_input);
-        if (user_input > 0 && user_input < 16) {
-            color = (char)user_input;
-        }
-    }
-    PT_END(pt);
-}
-
 void normalize_histogram(int* hist, int* heights) {
     int max = 1;
     for (int i = 0; i < NUM_BINS; i++) {
@@ -448,11 +432,13 @@ void normalize_histogram(int* hist, int* heights) {
 // Timing shown in the UI (all written on core 0 except physics_us)
 volatile uint32_t physics_us = 0;
 static uint32_t draw_us, frame_us, clear_us, pegs_us, balls_us, text_us, hist_us;
-static bool missed = false;
+static bool missed = false;                 // last animation frame overran 60 fps
+// when each UI thread last finished a full pass (for the late-thread LED)
+static uint32_t text_done_us, hist_done_us;
 
 // The UI threads draw with the normal library calls, into whichever buffer
 // is current_draw_buffer at the time. The animation thread never clears the
-// UI areas, so each pass clears its own area first. The two buffers get
+// UI areas, so the UI threads clear what they redraw. The two buffers get
 // updated on different passes, so changing values can flicker between them.
 static void clear_rows(char* buf, int y0, int y1, int byte0, int byte1) {
     for (int y = y0; y < y1; y++) {
@@ -485,11 +471,14 @@ static PT_THREAD (protothread_hist(struct pt *pt))
 {
     PT_BEGIN(pt);
 
+    hist_done_us = time_us_32();   // not late before the first pass
+
     while (1) {
         uint32_t t0 = time_us_32();
         clear_rows(current_draw_buffer, HIST_TOP, 480, 0, VGA_ROW_BYTES);
         draw_histogram(histogram);
         hist_us = time_us_32() - t0;
+        hist_done_us = time_us_32();
 
         PT_YIELD_usec(UI_PERIOD_US);
     }
@@ -497,101 +486,109 @@ static PT_THREAD (protothread_hist(struct pt *pt))
     PT_END(pt);
 }
 
-// UI text thread, 20 Hz
-static PT_THREAD (protothread_text(struct pt *pt))
-{
-    PT_BEGIN(pt);
+// Text for UI text line `line` (written into out), and the color to draw it
+#define TEXT_LINES 14
+static const short text_line_y[TEXT_LINES] = {
+    50, 60, 70, 80, 90, 100,        // stats and encoder-adjustable settings
+    120, 130, 140,                  // per-core timing
+    155, 165, 175, 185, 195,        // time per stage
+};
 
-    static char buf[48];
-
-    while (1) {
-        uint32_t t0 = time_us_32();
-        clear_rows(current_draw_buffer, TEXT_TOP, TEXT_BOTTOM, 0, TEXT_RIGHT / 8);
-
-        setTextSize(1);
-
-        // 1. Total Balls
-        setTextColor(WHITE);
-        setCursor(1, 50);
-        sprintf(buf, "Total Balls: %d", fallen_balls);
-        writeString(buf);
-
-        // 2. Seconds since boot
+static char format_text_line(int line, char* out) {
+    uint32_t phys = physics_us;
+    switch (line) {
+    // 1. Total Balls
+    case 0: sprintf(out, "Total Balls: %d", fallen_balls); return WHITE;
+    // 2. Seconds since boot
+    case 1: {
         struct timespec current_time;
         aon_timer_get_time(&current_time);
-        setCursor(1, 60);
-        sprintf(buf, "seconds since boot: %d", (int)current_time.tv_sec);
-        writeString(buf);
-
-        // 3. Balls (active selection highlight)
-        setTextColor(pusher_state == BALLS ? BLUE : WHITE);
-        setCursor(1, 70);
-        sprintf(buf, "Balls: %d", num_balls);
-        writeString(buf);
-
-        // 4. Bounciness (active selection highlight)
+        sprintf(out, "seconds since boot: %d", (int)current_time.tv_sec);
+        return WHITE;
+    }
+    // 3. Balls (active selection highlight)
+    case 2: sprintf(out, "Balls: %d", num_balls);
+            return pusher_state == BALLS ? BLUE : WHITE;
+    // 4. Bounciness (active selection highlight)
+    case 3: {
         float f_bounce = fix2float15(bounciness);
         int bounce_whole = (int)f_bounce;
         int bounce_hundredths = (int)((f_bounce - bounce_whole) * 100.0f + 0.5f);
         if (bounce_hundredths < 0) bounce_hundredths = -bounce_hundredths;
-        setTextColor(pusher_state == _BOUNCINESS ? BLUE : WHITE);
-        setCursor(1, 80);
-        sprintf(buf, "Bounciness: %d.%02d", bounce_whole, bounce_hundredths);
-        writeString(buf);
-
-        // 5. Gravity (active selection highlight)
+        sprintf(out, "Bounciness: %d.%02d", bounce_whole, bounce_hundredths);
+        return pusher_state == _BOUNCINESS ? BLUE : WHITE;
+    }
+    // 5. Gravity (active selection highlight)
+    case 4: {
         float f_grav = fix2float15(gravity);
         int grav_whole = (int)f_grav;
         int grav_hundredths = (int)((f_grav - grav_whole) * 100.0f + 0.5f);
         if (grav_hundredths < 0) grav_hundredths = -grav_hundredths;
-        setTextColor(pusher_state == _GRAVITY ? BLUE : WHITE);
-        setCursor(1, 90);
-        sprintf(buf, "Gravity: %d.%02d", grav_whole, grav_hundredths);
-        writeString(buf);
+        sprintf(out, "Gravity: %d.%02d", grav_whole, grav_hundredths);
+        return pusher_state == _GRAVITY ? BLUE : WHITE;
+    }
+    // 6. Ball Radius (active selection highlight)
+    case 5: sprintf(out, "Ball Radius: %d", ball_radius);
+            return pusher_state == _ball_radius ? BLUE : WHITE;
+    // 7. Per-core timing (slower core in red)
+    case 6: sprintf(out, "Physics (core 1): %lu us", (unsigned long)phys);
+            return phys > draw_us ? RED : WHITE;
+    case 7: sprintf(out, "Draw (core 0): %lu us", (unsigned long)draw_us);
+            return draw_us >= phys ? RED : WHITE;
+    case 8: sprintf(out, "Frame: %lu / 16667 us", (unsigned long)frame_us);
+            return missed ? RED : WHITE;
+    // 8. Time per stage. Clear, pegs and balls are per animation frame;
+    // text and histogram are per 20 Hz pass of their own threads
+    case 9:  sprintf(out, "  Clear:     %lu us", (unsigned long)clear_us);  return WHITE;
+    case 10: sprintf(out, "  Pegs:      %lu us", (unsigned long)pegs_us);   return WHITE;
+    case 11: sprintf(out, "  Balls:     %lu us", (unsigned long)balls_us);  return WHITE;
+    case 12: sprintf(out, "  Text:      %lu us", (unsigned long)text_us);   return WHITE;
+    case 13: sprintf(out, "  Histogram: %lu us", (unsigned long)hist_us);   return WHITE;
+    }
+    out[0] = '\0';
+    return WHITE;
+}
 
-        // 6. Ball Radius (active selection highlight)
-        setTextColor(pusher_state == _ball_radius ? BLUE : WHITE);
-        setCursor(1, 100);
-        sprintf(buf, "Ball Radius: %d", ball_radius);
-        writeString(buf);
+// When the animation thread started the current frame. The next buffer swap
+// comes about 16667 us later.
+static uint32_t frame_start_us;
 
-        // 7. Per-core timing (slower core in red)
-        uint32_t phys = physics_us;
-        setTextColor(phys > draw_us ? RED : WHITE);
-        setCursor(1, 120);
-        sprintf(buf, "Physics (core 1): %lu us", (unsigned long)phys);
-        writeString(buf);
+// A text line must start at least this long before the next buffer swap, so
+// it lands entirely in one buffer. Allows for one line (~0.2 ms) plus the
+// delay between the vsync and the animation thread noticing it.
+#define TEXT_LINE_DEADLINE_US (16667 - 2000)
 
-        setTextColor(draw_us >= phys ? RED : WHITE);
-        setCursor(1, 130);
-        sprintf(buf, "Draw (core 0): %lu us", (unsigned long)draw_us);
-        writeString(buf);
+// UI text thread, 20 Hz. Each line clears only its own rows and is drawn
+// whole into the current buffer, so a buffer swap between lines can't leave
+// a half-drawn or overdrawn line behind.
+static PT_THREAD (protothread_text(struct pt *pt))
+{
+    PT_BEGIN(pt);
 
-        setTextColor(missed ? RED : WHITE);
-        setCursor(1, 140);
-        sprintf(buf, "Frame: %lu / 16667 us", (unsigned long)frame_us);
-        writeString(buf);
+    text_done_us = time_us_32();   // not late before the first pass
 
-        // 8. Time per stage. Clear, pegs and balls are per animation frame;
-        // text and histogram are per 20 Hz pass of their own threads
-        setTextColor(WHITE);
-        setCursor(1, 155);
-        sprintf(buf, "  Clear:     %lu us", (unsigned long)clear_us);
-        writeString(buf);
-        setCursor(1, 165);
-        sprintf(buf, "  Pegs:      %lu us", (unsigned long)pegs_us);
-        writeString(buf);
-        setCursor(1, 175);
-        sprintf(buf, "  Balls:     %lu us", (unsigned long)balls_us);
-        writeString(buf);
-        setCursor(1, 185);
-        sprintf(buf, "  Text:      %lu us", (unsigned long)text_us);
-        writeString(buf);
-        setCursor(1, 195);
-        sprintf(buf, "  Histogram: %lu us", (unsigned long)hist_us);
-        writeString(buf);
+    static char buf[48];
+    static int line;
+    static uint32_t busy_us;
 
-        text_us = time_us_32() - t0;
+    while (1) {
+        busy_us = 0;
+        for (line = 0; line < TEXT_LINES; line++) {
+            // also yields, so the animation thread can catch its frame start
+            PT_YIELD_UNTIL(pt, time_us_32() - frame_start_us < TEXT_LINE_DEADLINE_US);
+
+            uint32_t t0 = time_us_32();
+            short y = text_line_y[line];
+            char line_color = format_text_line(line, buf);
+            clear_rows(current_draw_buffer, y, y + 8, 0, TEXT_RIGHT / 8);
+            setTextSize(1);
+            setTextColor(line_color);
+            setCursor(1, y);
+            writeString(buf);
+            busy_us += time_us_32() - t0;
+        }
+        text_us = busy_us;
+        text_done_us = time_us_32();
 
         PT_YIELD_usec(UI_PERIOD_US);
     }
@@ -650,6 +647,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         PT_YIELD_UNTIL(pt, draw_start_signal());
         //check if we are meeting the 60 fps deadline 
         start = time_us_32();
+        frame_start_us = start;
 
         // Signal Core 1 to compute physics in parallel
         sem_release(&sem_physics_start);
@@ -686,7 +684,11 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         frame_us = time_us_32() - start;
         missed = frame_us > 16667;
 
-        gpio_put(LED_PIN, missed);
+        // LED on if this frame overran, or a UI thread is behind schedule
+        uint32_t now = time_us_32();
+        bool ui_late = now - text_done_us > UI_LATE_US
+                    || now - hist_done_us > UI_LATE_US;
+        gpio_put(LED_PIN, missed || ui_late);
     }
 
     PT_END(pt);
@@ -752,9 +754,8 @@ int main() {
     multicore_reset_core1();
     multicore_launch_core1(core1_main);
 
-    pt_add_thread(protothread_serial);
-    pt_add_thread(protothread_anim);
     pt_add_thread(protothread_text);
+    pt_add_thread(protothread_anim);
     pt_add_thread(protothread_hist);
 
     pt_schedule_start;
