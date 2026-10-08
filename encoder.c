@@ -284,7 +284,7 @@ void checkBallCollision(boid_t* b, peg_t* p) {
 
             fix15 intermediate_term = -2 * (multfix15(normal_x, b->vx) + multfix15(normal_y, b->vy));
 
-            fix15 teleport_dist = int2fix15(PEG_RADIUS + ball_radius);
+            fix15 teleport_dist = int2fix15(PEG_RADIUS + ball_radius + 1);
             b->x = p->x + multfix15(normal_x, teleport_dist);
             b->y = p->y + multfix15(normal_y, teleport_dist);
 
@@ -480,6 +480,8 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     static bool missed = false;
     // static: protothread locals don't survive PT_SEM_SDK_WAIT's yield
     static uint32_t start, draw_us, frame_us;
+    // per-stage draw times (core 0), shown on screen one frame late
+    static uint32_t mark, clear_us, pegs_us, hist_us, text_us, balls_us;
 
     for (int i = 0; i < MAX_NUM_BALLS; i++) {
         spawnBall(&ball[i]);
@@ -492,21 +494,24 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
         sem_release(&sem_physics_start);
 
+        mark = time_us_32();
         clearLowFrame(0, BLACK);
-
-
-        // Signal Core 1 to compute physics in parallel
+        clear_us = time_us_32() - mark;
 
         // Core 0 draws pegs while Core 1 calculates physics
+        mark = time_us_32();
         for (int i = 0; i < 136; i++) {
             drawCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
         }
-
-
+        pegs_us = time_us_32() - mark;
 
         // Core 0 draws histogram and UI while Core 1 calculates physics
+        mark = time_us_32();
         draw_histogram(histogram);
+        hist_us = time_us_32() - mark;
 
+        // text timing covers everything from here through the stage timers below
+        mark = time_us_32();
         setTextSize(1);
 
         // 1. Total Balls
@@ -571,9 +576,32 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         sprintf(buf, "Frame: %lu / 16667 us", (unsigned long)frame_us);
         writeString(buf);
 
+        // 8. Core 0 draw time per stage. Clear, pegs and histogram are from
+        // this frame; text and balls haven't finished yet, so they're from
+        // the previous frame
+        setTextColor(WHITE);
+        setCursor(1, 155);
+        sprintf(buf, "  Clear:     %lu us", (unsigned long)clear_us);
+        writeString(buf);
+        setCursor(1, 165);
+        sprintf(buf, "  Pegs:      %lu us", (unsigned long)pegs_us);
+        writeString(buf);
+        setCursor(1, 175);
+        sprintf(buf, "  Histogram: %lu us", (unsigned long)hist_us);
+        writeString(buf);
+        setCursor(1, 185);
+        sprintf(buf, "  Text:      %lu us", (unsigned long)text_us);
+        writeString(buf);
+        setCursor(1, 195);
+        sprintf(buf, "  Balls:     %lu us", (unsigned long)balls_us);
+        writeString(buf);
+        text_us = time_us_32() - mark;
+
+        mark = time_us_32();
         for (int i = 0; i < num_balls; i++) {
             drawCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), ball_radius, color);
         }
+        balls_us = time_us_32() - mark;
 
         draw_us = time_us_32() - start;
 
