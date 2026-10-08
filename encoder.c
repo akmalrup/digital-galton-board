@@ -369,7 +369,7 @@ void draw_histogram(int* hist) {
 
     for (int i = 0; i < NUM_BINS; i++) {
         if (bar_heights[i] > 0) {
-            fillRect(HIST_LEFT + i * BIN_WIDTH, 480 - bar_heights[i],
+            drawRect(HIST_LEFT + i * BIN_WIDTH, 480 - bar_heights[i],
                      BIN_WIDTH - 2, bar_heights[i], BLUE);
         }
         // print count at bin
@@ -425,7 +425,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
 
         // Core 0 draws pegs while Core 1 calculates physics
         for (int i = 0; i < 136; i++) {
-            fillCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
+            drawCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
         }
 
 
@@ -481,7 +481,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         writeString(buf);
 
         for (int i = 0; i < num_balls; i++) {
-            fillCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), ball_radius, color);
+            drawCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), ball_radius, color);
         }
 
         PT_SEM_SDK_WAIT(pt, &sem_physics_done);
