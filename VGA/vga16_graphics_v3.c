@@ -73,7 +73,7 @@ DrawPixel is faster
 // #define RGB_ACTIVE 639 // change to this if 1 pixel/byte
 
 // Length of the pixel array, and number of DMA transfers
-#define VGA_BUFFER_COUNT 153600 // Total pixels/2 (since we have 2 pixels per byte)
+#define VGA_BUFFER_COUNT 38400 // Total pixels/2 (since we have 2 pixels per byte)
 
 // ===============================
 // !!!=========================!!!
@@ -329,7 +329,7 @@ void initVGA() {
     // in the assembly. Each uses these values to initialize some counting registers.
     pio_sm_put_blocking(pio, hsync_sm, H_ACTIVE);
     pio_sm_put_blocking(pio, vsync_sm, V_ACTIVE);
-    pio_sm_put_blocking(pio, rgb_sm, RGB_ACTIVE);
+    // RGB row count is initialized by rgb_program_init().
 
 
     // Start the two pio machine IN SYNC
@@ -360,17 +360,26 @@ void drawPixel(short x, short y, char color) {
     // Which pixel is it?
     // shift by one to get the byte (two pixels/byte)
     //int pixel = (640 * y + x) >> 1;
-    char * draw_loc = (current_draw_buffer + ((640 * y + x) >> 1)) ;
+    char * draw_loc = (current_draw_buffer + ((640 * y + x) >> 3)) ;
     // Is this pixel stored in the first 4 bits
     // of the vga data array index, or the second
     // 4 bits? Check, then mask.
     // draws to the current_draw_buffer
-    if (x & 1) {
-        *(draw_loc) = (*(draw_loc) & TOPMASK) | (color << 4) ;
-    }
-    else {
-        *(draw_loc) = (*(draw_loc) & BOTTOMMASK) | (color) ;
-    }
+    // if (x & 1) {
+    //     *(draw_loc) = (*(draw_loc) & TOPMASK) | (color << 4) ;
+    // }
+    // else {
+    //     *(draw_loc) = (*(draw_loc) & BOTTOMMASK) | (color) ;
+    // }
+
+    // one-hot
+    short mask = 1 << (x & 7);
+
+    
+    if (color != 0)
+        *draw_loc |= mask;           // Set this pixel
+    else
+        *draw_loc &= (uint8_t)~mask;  // Clear this pixel
 }
 
 // Check status of neighbors
@@ -404,36 +413,17 @@ void drawVLine(short x, short y, short h, char color) {
     }
 }
 
-// horizontal line
-// note that this function draws using drawPiexl AND
-// directly hitting the buffer memory for speed
+// Horizontal line: draw through the packed 1-bit pixel routine.
 void drawHLine(int x, int y, int w, char color) {
-  // range checks
-  if((x >= _width) || (y >= _height)) return;
-  if((x + w - 1) >= _width)  w = _width  - x - 1;
-  if(w<1) return ;
-  //
-  if(w == 1){
-    drawPixel(x,y,color);
-    return ;
+  if (y < 0 || y >= _height || w <= 0) return;
+
+  int end = x + w;
+  if (x < 0) x = 0;
+  if (end > _width) end = _width;
+
+  for (; x < end; x++) {
+    drawPixel(x, y, color);
   }
-  //
-  short both_color = color | (color<<4) ;
-  // loner pixel at x -- align left with next byte boundary
-  if((x & 1)) {
-    drawPixel(x,y,color);
-    x++ ;
-    w-- ;
-  }
-  // draw loner pixel at end and adjust width
-  if((w & 1)){
-    drawPixel(x+w-1, y, color);
-    w-- ;
-  }
-  // draw rest of line
-  int len = (w>>1)  ;
-  if (len>0  )  //&& len+x < 640 && y<480
-    memset(current_draw_buffer+(320*y+(x>>1)), both_color, len) ;
 }
 
 // general line drawing
@@ -1291,7 +1281,7 @@ void clearRect(short x1, short y1, short x2, short y2, short c) {
 }
 //
 void clearLowFrame(short top, short c) {
-    memset((current_draw_buffer+320*top), c | (c<<4), (VGA_BUFFER_COUNT-320*top) );
+    memset((current_draw_buffer+80*top), c != 0 ? 0xFF : 0x00, (VGA_BUFFER_COUNT-80*top) );
 }
 // region from y1 to y2 with y1 < y2
 void clearRegion(short y1, short y2, short c) {

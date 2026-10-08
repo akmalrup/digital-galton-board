@@ -150,11 +150,11 @@ volatile fix15 gravity = float2fix15(0.6);
 volatile fix15 bounciness = float2fix15(0.3);
 
 #define MAX_NUM_BALLS 10000
-volatile int num_balls = 5000;
+volatile int num_balls = 10000;
 volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
 
-volatile int ball_radius = 4;
+volatile int ball_radius = 1;
 
 typedef enum {
     BALLS,
