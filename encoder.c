@@ -384,9 +384,13 @@ void draw_histogram(int* hist) {
 
 
 
+// Core 1 physics step time, written by core 1, read by core 0 for display
+volatile uint32_t physics_us = 0;
+
 void core1_main() {
     while (1) {
         sem_acquire_blocking(&sem_physics_start);
+        uint32_t t0 = time_us_32();
 
         for (int i = 0; i < num_balls; i++) {
             updateBallPhysics(&ball[i]);
@@ -398,6 +402,7 @@ void core1_main() {
             }
         }
 
+        physics_us = time_us_32() - t0;
         sem_release(&sem_physics_done);
     }
 }
@@ -407,7 +412,9 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     PT_BEGIN(pt);
 
     static char buf[48];
-    static bool missed = false;  
+    static bool missed = false;
+    // static: protothread locals don't survive PT_SEM_SDK_WAIT's yield
+    static uint32_t start, draw_us, frame_us;
 
     for (int i = 0; i < MAX_NUM_BALLS; i++) {
         spawnBall(&ball[i]);
@@ -416,12 +423,14 @@ static PT_THREAD (protothread_anim(struct pt *pt))
     while (1) {
         PT_YIELD_UNTIL(pt, draw_start_signal());
         //check if we are meeting the 60 fps deadline 
-        uint32_t start = time_us_32(); 
+        start = time_us_32();
+
+        sem_release(&sem_physics_start);
+
         clearLowFrame(0, BLACK);
 
 
         // Signal Core 1 to compute physics in parallel
-        sem_release(&sem_physics_start);
 
         // Core 0 draws pegs while Core 1 calculates physics
         for (int i = 0; i < 136; i++) {
@@ -480,13 +489,33 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         sprintf(buf, "Ball Radius: %d", ball_radius);
         writeString(buf);
 
+        // 7. Per-core timing from the previous frame (slower core in red)
+        uint32_t phys = physics_us;
+        setTextColor(phys > draw_us ? RED : WHITE);
+        setCursor(1, 120);
+        sprintf(buf, "Physics (core 1): %lu us", (unsigned long)phys);
+        writeString(buf);
+
+        setTextColor(draw_us >= phys ? RED : WHITE);
+        setCursor(1, 130);
+        sprintf(buf, "Draw (core 0): %lu us", (unsigned long)draw_us);
+        writeString(buf);
+
+        setTextColor(missed ? RED : WHITE);
+        setCursor(1, 140);
+        sprintf(buf, "Frame: %lu / 16667 us", (unsigned long)frame_us);
+        writeString(buf);
+
         for (int i = 0; i < num_balls; i++) {
             drawCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), ball_radius, color);
         }
 
+        draw_us = time_us_32() - start;
+
         PT_SEM_SDK_WAIT(pt, &sem_physics_done);
 
-        missed = time_us_32() - start > 16667;
+        frame_us = time_us_32() - start;
+        missed = frame_us > 16667;
 
         gpio_put(LED_PIN, missed);
         
