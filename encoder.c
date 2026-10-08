@@ -78,14 +78,32 @@ __attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 #define SPI_PORT spi0
 
 
-// histogram 
+// Screen layout. The UI text box (top left) and the histogram strip (bottom)
+// are drawn into both framebuffers only when they change, by their own
+// threads. The animation thread never clears or draws inside them.
 
-#define HIST_HEIGHT 80
+#define VGA_ROW_BYTES 80            // 640 px per row at 1 bit per pixel
+
+// UI text box: 28 chars of the 6 px wide font, from x = 0
+#define TEXT_LINE_CHARS 28
+#define TEXT_RIGHT      (TEXT_LINE_CHARS * 6)   // 168 px, a whole number of bytes
+#define TEXT_TOP        50
+#define TEXT_BOTTOM     204
+
+// histogram strip: from just below the bottom peg row (y = 385 + PEG_RADIUS)
+// to the bottom of the screen, with bin count labels on the last text row
+#define HIST_TOP        392
+#define HIST_BAR_BOTTOM 470
+#define HIST_LABEL_Y    472
+#define HIST_HEIGHT     (HIST_BAR_BOTTOM - HIST_TOP - 2)   // 76 px tallest bar
 #define NUM_BINS    17
 #define BIN_WIDTH   38
 // x of bin 0's left edge. Chosen so the middle bin (8) spans [301, 339),
 // centered on the board's center x = 320, with bin edges on the bottom-row pegs
 #define HIST_LEFT   (320 - BIN_WIDTH / 2 - (NUM_BINS / 2) * BIN_WIDTH)
+
+// UI and histogram refresh period: 20 Hz
+#define UI_PERIOD_US 50000
 
 int data_chan;
 
@@ -149,8 +167,8 @@ typedef signed int fix15;
 volatile fix15 gravity = float2fix15(0.6);
 volatile fix15 bounciness = float2fix15(0.3);
 
-#define MAX_NUM_BALLS 10000
-volatile int num_balls = 10000;
+#define MAX_NUM_BALLS 24000
+volatile int num_balls = 12000;
 volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
 
@@ -414,8 +432,6 @@ static PT_THREAD (protothread_serial(struct pt *pt))
     PT_END(pt);
 }
 
-int bar_heights[NUM_BINS];
-
 void normalize_histogram(int* hist, int* heights) {
     int max = 1;
     for (int i = 0; i < NUM_BINS; i++) {
@@ -429,89 +445,69 @@ void normalize_histogram(int* hist, int* heights) {
 }
 
 
+// Timing shown in the UI (all written on core 0 except physics_us)
+volatile uint32_t physics_us = 0;
+static uint32_t draw_us, frame_us, clear_us, pegs_us, balls_us, text_us, hist_us;
+static bool missed = false;
+
+// The UI threads draw with the normal library calls, into whichever buffer
+// is current_draw_buffer at the time. The animation thread never clears the
+// UI areas, so each pass clears its own area first. The two buffers get
+// updated on different passes, so changing values can flicker between them.
+static void clear_rows(char* buf, int y0, int y1, int byte0, int byte1) {
+    for (int y = y0; y < y1; y++) {
+        memset(buf + y * VGA_ROW_BYTES + byte0, 0, byte1 - byte0);
+    }
+}
+
+int bar_heights[NUM_BINS];
+
 void draw_histogram(int* hist) {
     normalize_histogram(hist, bar_heights);
 
     for (int i = 0; i < NUM_BINS; i++) {
         if (bar_heights[i] > 0) {
-            drawRect(HIST_LEFT + i * BIN_WIDTH, 480 - bar_heights[i],
+            drawRect(HIST_LEFT + i * BIN_WIDTH, HIST_BAR_BOTTOM - bar_heights[i],
                      BIN_WIDTH - 2, bar_heights[i], BLUE);
         }
-        // print count at bin
+        // print count at the bottom of the screen, under its bin
 
         char buf[32];
         setTextColor(WHITE);
-        setCursor(HIST_LEFT + i * BIN_WIDTH, 480 - bar_heights[i] - 10);
+        setCursor(HIST_LEFT + i * BIN_WIDTH, HIST_LABEL_Y);
         sprintf(buf, "%d", histogram[i]);
         writeString(buf);
     }
 }
 
+// Histogram thread, 20 Hz
+static PT_THREAD (protothread_hist(struct pt *pt))
+{
+    PT_BEGIN(pt);
 
-
-// Core 1 physics step time, written by core 1, read by core 0 for display
-volatile uint32_t physics_us = 0;
-
-void core1_main() {
     while (1) {
-        sem_acquire_blocking(&sem_physics_start);
         uint32_t t0 = time_us_32();
+        clear_rows(current_draw_buffer, HIST_TOP, 480, 0, VGA_ROW_BYTES);
+        draw_histogram(histogram);
+        hist_us = time_us_32() - t0;
 
-        for (int i = 0; i < num_balls; i++) {
-            updateBallPhysics(&ball[i]);
-        }
-
-        // Resolve peg collisions, checking each ball only against
-        // the pegs near it (see checkNearbyPegs) rather than all 136
-        for (int i = 0; i < num_balls; i++) {
-            checkNearbyPegs(&ball[i]);
-        }
-
-        physics_us = time_us_32() - t0;
-        sem_release(&sem_physics_done);
+        PT_YIELD_usec(UI_PERIOD_US);
     }
+
+    PT_END(pt);
 }
 
-static PT_THREAD (protothread_anim(struct pt *pt))
+// UI text thread, 20 Hz
+static PT_THREAD (protothread_text(struct pt *pt))
 {
     PT_BEGIN(pt);
 
     static char buf[48];
-    static bool missed = false;
-    // static: protothread locals don't survive PT_SEM_SDK_WAIT's yield
-    static uint32_t start, draw_us, frame_us;
-    // per-stage draw times (core 0), shown on screen one frame late
-    static uint32_t mark, clear_us, pegs_us, hist_us, text_us, balls_us;
-
-    for (int i = 0; i < MAX_NUM_BALLS; i++) {
-        spawnBall(&ball[i]);
-    }
 
     while (1) {
-        PT_YIELD_UNTIL(pt, draw_start_signal());
-        //check if we are meeting the 60 fps deadline 
-        start = time_us_32();
+        uint32_t t0 = time_us_32();
+        clear_rows(current_draw_buffer, TEXT_TOP, TEXT_BOTTOM, 0, TEXT_RIGHT / 8);
 
-        sem_release(&sem_physics_start);
-
-        mark = time_us_32();
-        clearLowFrame(0, BLACK);
-        clear_us = time_us_32() - mark;
-
-        // Core 0 draws pegs while Core 1 calculates physics
-        mark = time_us_32();
-        for (int i = 0; i < 136; i++) {
-            drawCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
-        }
-        pegs_us = time_us_32() - mark;
-
-        // Core 0 draws histogram and UI while Core 1 calculates physics
-        mark = time_us_32();
-        draw_histogram(histogram);
-        hist_us = time_us_32() - mark;
-
-        // text timing covers everything from here through the stage timers below
-        mark = time_us_32();
         setTextSize(1);
 
         // 1. Total Balls
@@ -559,7 +555,7 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         sprintf(buf, "Ball Radius: %d", ball_radius);
         writeString(buf);
 
-        // 7. Per-core timing from the previous frame (slower core in red)
+        // 7. Per-core timing (slower core in red)
         uint32_t phys = physics_us;
         setTextColor(phys > draw_us ? RED : WHITE);
         setCursor(1, 120);
@@ -576,9 +572,8 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         sprintf(buf, "Frame: %lu / 16667 us", (unsigned long)frame_us);
         writeString(buf);
 
-        // 8. Core 0 draw time per stage. Clear, pegs and histogram are from
-        // this frame; text and balls haven't finished yet, so they're from
-        // the previous frame
+        // 8. Time per stage. Clear, pegs and balls are per animation frame;
+        // text and histogram are per 20 Hz pass of their own threads
         setTextColor(WHITE);
         setCursor(1, 155);
         sprintf(buf, "  Clear:     %lu us", (unsigned long)clear_us);
@@ -587,19 +582,100 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         sprintf(buf, "  Pegs:      %lu us", (unsigned long)pegs_us);
         writeString(buf);
         setCursor(1, 175);
-        sprintf(buf, "  Histogram: %lu us", (unsigned long)hist_us);
+        sprintf(buf, "  Balls:     %lu us", (unsigned long)balls_us);
         writeString(buf);
         setCursor(1, 185);
         sprintf(buf, "  Text:      %lu us", (unsigned long)text_us);
         writeString(buf);
         setCursor(1, 195);
-        sprintf(buf, "  Balls:     %lu us", (unsigned long)balls_us);
+        sprintf(buf, "  Histogram: %lu us", (unsigned long)hist_us);
         writeString(buf);
-        text_us = time_us_32() - mark;
+
+        text_us = time_us_32() - t0;
+
+        PT_YIELD_usec(UI_PERIOD_US);
+    }
+
+    PT_END(pt);
+}
+
+
+
+void core1_main() {
+    while (1) {
+        sem_acquire_blocking(&sem_physics_start);
+        uint32_t t0 = time_us_32();
+
+        for (int i = 0; i < num_balls; i++) {
+            updateBallPhysics(&ball[i]);
+        }
+
+        // Resolve peg collisions, checking each ball only against
+        // the pegs near it (see checkNearbyPegs) rather than all 136
+        for (int i = 0; i < num_balls; i++) {
+            checkNearbyPegs(&ball[i]);
+        }
+
+        physics_us = time_us_32() - t0;
+        sem_release(&sem_physics_done);
+    }
+}
+
+static void clear_ball_area(void) {
+    char* buf = current_draw_buffer;
+    // rows above the text box
+    memset(buf, 0, TEXT_TOP * VGA_ROW_BYTES);
+    // rows beside the text box: only the part right of it
+    for (int y = TEXT_TOP; y < TEXT_BOTTOM; y++) {
+        memset(buf + y * VGA_ROW_BYTES + TEXT_RIGHT / 8, 0,
+               VGA_ROW_BYTES - TEXT_RIGHT / 8);
+    }
+    // rows below the text box, down to the histogram strip
+    memset(buf + TEXT_BOTTOM * VGA_ROW_BYTES, 0,
+           (HIST_TOP - TEXT_BOTTOM) * VGA_ROW_BYTES);
+}
+
+static PT_THREAD (protothread_anim(struct pt *pt))
+{
+    PT_BEGIN(pt);
+
+    // static: protothread locals don't survive PT_SEM_SDK_WAIT's yield
+    static uint32_t start, mark;
+
+    for (int i = 0; i < MAX_NUM_BALLS; i++) {
+        spawnBall(&ball[i]);
+    }
+
+    while (1) {
+        PT_YIELD_UNTIL(pt, draw_start_signal());
+        //check if we are meeting the 60 fps deadline 
+        start = time_us_32();
+
+        // Signal Core 1 to compute physics in parallel
+        sem_release(&sem_physics_start);
 
         mark = time_us_32();
-        for (int i = 0; i < num_balls; i++) {
-            drawCircle(fix2int15(ball[i].x), fix2int15(ball[i].y), ball_radius, color);
+        clear_ball_area();
+        clear_us = time_us_32() - mark;
+
+        // Core 0 draws pegs while Core 1 calculates physics
+        mark = time_us_32();
+        for (int i = 0; i < 136; i++) {
+            drawCircle(fix2int15(peg[i].x), fix2int15(peg[i].y), PEG_RADIUS, WHITE);
+        }
+        pegs_us = time_us_32() - mark;
+
+        // Balls inside the UI text box or the histogram strip are skipped:
+        // those areas are never cleared here, so they would leave trails
+        mark = time_us_32();
+        int r = ball_radius;
+        int n = num_balls;
+        for (int i = 0; i < n; i++) {
+            int bx = fix2int15(ball[i].x);
+            int by = fix2int15(ball[i].y);
+            if (by + r >= HIST_TOP) continue;
+            if (bx - r < TEXT_RIGHT && by + r >= TEXT_TOP && by - r < TEXT_BOTTOM) continue;
+            drawCircle(bx, by, r, color);
         }
         balls_us = time_us_32() - mark;
 
@@ -611,7 +687,6 @@ static PT_THREAD (protothread_anim(struct pt *pt))
         missed = frame_us > 16667;
 
         gpio_put(LED_PIN, missed);
-        
     }
 
     PT_END(pt);
@@ -679,6 +754,8 @@ int main() {
 
     pt_add_thread(protothread_serial);
     pt_add_thread(protothread_anim);
+    pt_add_thread(protothread_text);
+    pt_add_thread(protothread_hist);
 
     pt_schedule_start;
 
