@@ -147,7 +147,7 @@ typedef signed int fix15;
 volatile fix15 gravity = float2fix15(0.6);
 volatile fix15 bounciness = float2fix15(0.3);
 
-#define MAX_NUM_BALLS 1024
+#define MAX_NUM_BALLS 5000
 volatile int num_balls = 470;
 volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
