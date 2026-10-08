@@ -246,7 +246,8 @@ char color = WHITE;
 static int last_peg = -1;
 
 void spawnBall(boid_t* b) {
-    b->x = int2fix15(320);
+    // random sub-pixel offset in [-2, 2) px around center (0x1FFFF = 4 px in fix15)
+    b->x = int2fix15(318) + (rand() & 0x1FFFF);
     b->y = float2fix15(56.5);
     b->vx = 0;
     b->vy = 0;
@@ -292,9 +293,6 @@ void checkBallCollision(boid_t* b, peg_t* p) {
 
             b->vx = multfix15(bounciness, b->vx);
             b->vy = multfix15(bounciness, b->vy);
-
-            fix15 impulse = (rand() & 1) ? float2fix15(0.2) : float2fix15(-0.2);
-            b->vx += impulse;
 
             dma_chirp();
 
