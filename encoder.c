@@ -252,6 +252,12 @@ void spawnBall(boid_t* b) {
     b->vy = 0;
 }
 
+static inline fix15 dist_amax_bmin(fix15 dx, fix15 dy) {
+    fix15 ax = absfix15(dx);
+    fix15 ay = absfix15(dy);
+    return (ax > ay) ? ax + (ay >> 1) : ay + (ax >> 1);
+}
+
 void checkBallCollision(boid_t* b, peg_t* p) {
     fix15 col_dist = int2fix15(ball_radius + PEG_RADIUS);
 
@@ -259,20 +265,19 @@ void checkBallCollision(boid_t* b, peg_t* p) {
     fix15 dy = b->y - p->y;
 
     if (absfix15(dx) < col_dist && absfix15(dy) < col_dist) {
-        float fdx = fix2float15(dx);
-        float fdy = fix2float15(dy);
-        float fdist = sqrtf(fdx * fdx + fdy * fdy);
-        fix15 distance = float2fix15(fdist);
+        fix15 distance = dist_amax_bmin(dx, dy);
 
         if (distance > 0 && distance < col_dist) {
 
-            if (fabsf(fdx) < 0.5f) {
-                fdx = (rand() & 1) ? 2.0f : -2.0f;
-                fdist = sqrtf(fdx * fdx + fdy * fdy);
+            if (absfix15(dx) < float2fix15(0.5)) {
+                dx = (rand() & 1) ? int2fix15(2) : -int2fix15(2);
+                distance = dist_amax_bmin(dx, dy);
             }
 
-            fix15 normal_x = float2fix15(fdx / fdist);
-            fix15 normal_y = float2fix15(fdy / fdist);
+            // one divide, then multiply both components by 1/distance
+            fix15 inv_dist = divfix(int2fix15(1), distance);
+            fix15 normal_x = multfix15(dx, inv_dist);
+            fix15 normal_y = multfix15(dy, inv_dist);
 
             fix15 intermediate_term = -2 * (multfix15(normal_x, b->vx) + multfix15(normal_y, b->vy));
 
