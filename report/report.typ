@@ -34,12 +34,8 @@
 // ============================================================
 = Introduction
 // ============================================================
-#todo[One short paragraph covering the points below.]
 
-- What a Galton board is: balls bounce left or right off rows of pegs and pile up in bins.
-- The ideal math: each bounce is a coin flip, so the bin counts follow a binomial distribution that looks like a Gaussian.
-- What we built: an RP2350 VGA animation of balls hitting pegs, a DMA "thunk" sound on collisions, rotary-encoder controls, and a live histogram.
-- Headline result: the most balls we kept running at 60 fps.
+A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one pef in each row an dlands in one of the bins at the borrom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of goinf right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit thearem says this turns into a bell-shaped Gaussian curve. In this lab, we built a figital version of a galton board on the RP2350 and showed it on a CGA screen. Balls fall through 16 rows and pefs and bounce off them using collision phyiscs. Everytime the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are bale to watch the Gaussian curve form. A rotar yencoder lers the user change the nuber of balls, the bounciness, the graviy, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran ~19k balls without missing timing. 
 
 // ============================================================
 = Design and Testing Methods
