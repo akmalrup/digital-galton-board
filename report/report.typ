@@ -87,13 +87,45 @@
 === Encoder modes and on-screen display
 #todo[How the user changes settings and what the screen shows.]
 
-- Button cycles: number of balls #sym.arrow bounciness #sym.arrow gravity #sym.arrow ball radius. The active mode is shown in blue.
+- Button cycles: number of balls #sym.arrow bounciness #sym.arrow gravity #sym.arrow ball radius. #todo[How is the active mode shown now that the screen is 1-bit (black and white)?]
 - Screen shows balls fallen, seconds since boot, current settings, and per-core timing.
 
-== Getting to 60 fps
-#todo[What let us run more balls, and what we tried and reverted.]
+== Optimizations
+We measured success by the number of balls we could run while every frame still finished within 16.67 ms (60 fps), which means the deadline LED stays off. We recorded the new maximum after each round of changes. @tab:opt sums up the steps, and the paragraphs below explain each one.
 
-- Measure of success: number of balls at 60 fps with the LED off.
+#figure(
+  table(
+    columns: (1.3fr, 2.6fr, 1fr),
+    inset: 6pt,
+    align: (left, left, right),
+    stroke: 0.5pt,
+    table.header[*Step*][*What changed*][*Max balls at 60 fps*],
+    [Starting point], [Physics on Core 1, drawing on Core 0], [450],
+    [Semaphore fix], [Core 0 draws balls while Core 1 runs physics], [850],
+    [Faster collisions], [Outline-only drawing, alpha-max-beta-min distance, only check nearby pegs], [3,000],
+    [Radius-1 balls], [Balls shrunk to 1 px with a fast drawing path], [#todo[$tilde$10,000? confirm]],
+    [1-bit color], [Frame buffers shrunk to 1 bit per pixel to free memory], [14,000],
+    [Overclock], [System clock raised from 150 MHz to 200 MHz], [#todo[number]],
+  ),
+  caption: [Maximum number of balls at 60 fps after each optimization.],
+) <tab:opt>
+
+*Semaphore fix.* At first, Core 0 told Core 1 to start the physics, drew the pegs and text, and then waited for Core 1 to finish before drawing the balls. This meant drawing the balls and doing the physics never happened at the same time. We moved the "start" signal to the very beginning of the frame and moved the wait to the very end, after the balls are drawn. Now both cores work for almost the whole frame, which roughly doubled the ball count.
+
+*Faster collisions.* These changes made Core 1's physics loop much cheaper:
+- We switched from filled shapes to outlines (`drawCircle` and `drawRect` instead of `fillCircle` and `fillRect`), so each ball, peg, and bar sets fewer pixels.
+- We replaced the floating-point `sqrt` in the collision check with the alpha-max-beta-min approximation, which only needs a compare, a shift, and an add. Finding the direction of the bounce now takes one divide instead of two.
+- Before, every ball was checked against all 136 pegs every frame. Since the rows are 19 px apart and the pegs in a row are 38 px apart, a ball can only touch the nearest peg in at most 2 rows. We work out those pegs directly from the ball's position, so each ball needs at most 2 collision checks instead of 136.
+
+*Radius-1 balls.* We shrank the balls to a radius of 1 pixel. We also added a shortcut to `drawCircle` for a radius of 1. The normal circle algorithm only lights 4 pixels at that size, but it draws each of them 3 times, so the shortcut just draws the 4 pixels once.
+
+*1-bit color.* At this point we ran out of memory, not time. The RP2350 has 520 KB of SRAM. The two VGA frame buffers at 4 bits per pixel took 2 #sym.times 153,600 = 307,200 bytes, and each ball takes 16 bytes (four fix15 numbers), so we could only fit about 12,500 balls. We changed the VGA driver and the RGB PIO program to use 1 bit per pixel (black or white). This shrinks each buffer to 38,400 bytes and frees 230,400 bytes, enough for about 14,400 more balls. The downside is that the screen can only show black and white.
+
+*Overclock.* We raised the system clock from 150 MHz to 200 MHz. To keep the VGA timing correct, we changed the PIO clock dividers from 6 to 8 (so the PIO still runs at 25 MHz) and adjusted the delays in the RGB program.
+
+*Things we tried and undid.* #todo[Why were these reverted?]
+- Stochastic rounding
+- Separate protothreads for the text and the histogram
 
 == Testing
 #todo[Fill in which tests were run. Measured outcomes go in Results.]
@@ -139,7 +171,7 @@
 // ============================================================
 
 == Speed
-#todo[Max balls at 60 fps. Physics / draw / frame time breakdown.]
+#todo[Final max balls at 60 fps (see @tab:opt for how we got there). Physics / draw / frame time breakdown from the on-screen timers.]
 
 == Accuracy
 #todo[Screenshot of the board and histogram, compared to the ideal $B(16, 1/2)$. Sources of error (missed pegs, balls passing through pegs, spawn bias, fixed-point rounding).]
