@@ -8,7 +8,8 @@
   numbering: "1",
 )
 #set text(font: "New Computer Modern", size: 11pt)
-#set heading(numbering: "1.1")
+// Number only the main sections ("1.", "2.", ...); subheadings stay unnumbered
+#set heading(numbering: (..n) => if n.pos().len() == 1 { numbering("1.", ..n) })
 #set par(justify: true, leading: 0.65em)
 #show link: set text(fill: blue)
 
@@ -30,69 +31,72 @@
 #outline(indent: auto, depth: 2)
 #pagebreak()
 
+// ============================================================
 = Introduction
-#todo[Short explanation of what was done. Audience is yourselves in a few years.]
+// ============================================================
+#todo[One short paragraph covering the points below.]
 
-- What a Galton board is (pegs, bins, left/right bounces).
-- Idealized math: Bernoulli trials $->$ binomial $->$ Gaussian via the CLT.
-- What we built: RP2350 VGA animation of colliding balls, DMA "thunk" audio, rotary-encoder UI, live histogram.
-- High-level result: max balls at 60 fps, parameters the user can tune.
+- What a Galton board is: balls bounce left or right off rows of pegs and pile up in bins.
+- The ideal math: each bounce is a coin flip, so the bin counts follow a binomial distribution that looks like a Gaussian.
+- What we built: an RP2350 VGA animation of balls hitting pegs, a DMA "thunk" sound on collisions, rotary-encoder controls, and a live histogram.
+- Headline result: the most balls we kept running at 60 fps.
 
+// ============================================================
 = Design and Testing Methods
+// ============================================================
 
-== High-level architecture
-#todo[Cores, threads, DMA, VGA double-buffer, SPI DAC. Why this split.]
+== System overview
+#todo[How the work is split between the two cores and why.]
 
-- Core 0 / Core 1 responsibilities.
-- Protothreads vs. DMA vs. PIO (who owns the 60 fps budget).
-- Data that is shared (ball count, bounciness, histogram) and how it is protected.
+- Core 1 runs the physics for every ball. Core 0 draws the pegs, histogram, text, and balls.
+- Two semaphores keep the cores in step once per frame.
+- System clock overclocked to 200 MHz.
 
 == Hardware
+#todo[Short description of each part and how it is wired.]
 
-=== Rotary encoder
-#todo[GPIO, quadrature decoding, pushbutton debounce, mode cycling.]
-
-- Channels A/B and the built-in switch.
-- State machine for clockwise / counterclockwise counts.
-- Button: cycle encoder modes (ball count, bounciness, #todo[5730 extra parameter]).
-- VGA indication of the active mode.
-
-=== VGA and double buffering
-#todo[Hsync / Vsync / RGB GPIOs, 640$times$480 Hz, why double-buffering.]
-
-=== SPI DAC and DMA thunk
-#todo[MCP4822 wiring, SPI clock, DMA ping-pong / ring buffer, trigger-on-new-peg.]
-
-- Why DMA instead of interrupt-based synthesis.
-- How a collision arms a DMA transfer without stalling physics.
-
-=== LED deadline indicator
-#todo[GPIO 25 (or equivalent): on if a frame misses 60 fps.]
+- Rotary encoder: channel A on GPIO 14, channel B on GPIO 15, pushbutton on GPIO 13.
+- VGA: Hsync on GPIO 16, Vsync on GPIO 17, color on GPIO 18--21 through the resistor DAC.
+- MCP4822 DAC on SPI0 (GPIO 4--7).
+- Deadline LED on GPIO 25.
 
 == Software
 
-=== Fixed-point arithmetic and collision physics
-#todo[Format (e.g. s15.16), gravity, walls, spawn, coefficient of restitution.]
+=== Ball physics
+#todo[Fixed-point format, gravity, walls, respawn, bounciness.]
 
-- Position/velocity update each frame.
-- Broad-phase AABB vs. exact distance (alpha max + beta min vs. `sqrt`).
-- Teleport-out of the peg, normal vector, energy loss on *new* peg only.
-- Last-peg tracking so one contact does not spam DMA.
+=== Peg collisions
+#todo[How a hit is detected and handled.]
 
-=== Galton board geometry
-#todo[16 rows, peg spacing, bin mapping under the bottom row.]
+- Alpha-max-beta-min distance instead of `sqrt`.
+- Push the ball out of the peg, reflect its velocity, then scale by bounciness.
+- Only check the 1--2 pegs near each ball instead of all 136.
 
-=== Histogram
-#todo[Which bin a ball falls into; normalize bar height to leftover VGA space; reset on parameter change.]
+=== Board layout and histogram
+#todo[Peg grid and how balls are counted.]
 
-=== Optimization for 60 fps
-#todo[What actually bought balls: fixed-point, early-outs, multicore, overclock, fewer `sqrt`s, etc.]
+- 16 rows, 136 pegs, 19 px spacing.
+- 17 bins, 38 px wide, lined up with the bottom row of pegs.
+- Bars are scaled to the tallest bin and reset when a setting changes.
 
-- Metric: balls sustained at 60 fps (LED off).
-- Tradeoffs you rejected and why.
+=== DMA thunk sound
+#todo[Sound table, DMA setup, and how a collision starts the sound without slowing the physics.]
+
+- #todo[Does the thunk play on every collision or only on a new peg?]
+
+=== Encoder modes and on-screen display
+#todo[How the user changes settings and what the screen shows.]
+
+- Button cycles: number of balls #sym.arrow bounciness #sym.arrow gravity #sym.arrow ball radius. The active mode is shown in blue.
+- Screen shows balls fallen, seconds since boot, current settings, and per-core timing.
+
+== Getting to 60 fps
+#todo[What let us run more balls, and what we tried and reverted.]
+
+- Measure of success: number of balls at 60 fps with the LED off.
 
 == Testing
-#todo[Tests whose outcomes would convince a TA the spec is met.]
+#todo[Fill in which tests were run. Measured outcomes go in Results.]
 
 #figure(
   table(
@@ -102,83 +106,79 @@
     stroke: 0.5pt,
     table.header[*Requirement*][*Test*][*Pass criterion*],
     [Encoder CW / CCW], [Rotate while watching VGA count], [Increments / decrements reliably],
-    [One ball, one peg (Wk 1)], [Drop, collide, thunk, respawn], [Audible DMA hit; gravity; auto-respawn],
-    [16-row board, $>=$10 balls (Wk 2)], [Visual + serial], [All collide, thunk on *new* peg, respawn],
-    [Live stats], [VGA overlay], [active balls, total fallen, time since boot],
-    [Histogram], [Let balls accumulate], [17 bins; height uses space under the board],
-    [Max balls @ 60 fps (Wk 3)], [Boot + LED], [LED off at advertised $N_"max"$],
-    [Encoder modes], [Click through states], [VGA shows mode; rotation edits that param],
-    [Param change resets stats], [Twist encoder mid-run], [Histogram and total-fallen go to 0],
-    [Deadline LED], [Force overload], [LED on iff frame $>$ 16.67 ms],
+    [One ball, one peg (Wk 1)], [Drop, collide, thunk, respawn], [Audible thunk; gravity; auto-respawn],
+    [16-row board, $>=$10 balls (Wk 2)], [Watch VGA], [All collide, thunk, respawn],
+    [Live stats], [VGA overlay], [Active balls, total fallen, time since boot],
+    [Histogram], [Let balls build up], [17 bins; bars fit under the board],
+    [Max balls @ 60 fps (Wk 3)], [Raise ball count, watch LED], [LED off at $N_"max"$],
+    [Encoder modes], [Click through modes], [VGA shows mode; rotating edits that setting],
+    [Setting change resets stats], [Turn encoder mid-run], [Histogram and total fallen go to 0],
+    [Deadline LED], [Overload the system], [LED on only when frame $>$ 16.67 ms],
   ),
-  caption: [Verification matrix. Fill in measured outcomes in Results.],
+  caption: [Verification tests.],
 )
 
 == AI use
-#todo[Tools, what they generated, what you accepted, how you verified it. Cite like any other source.]
+#todo[Tools used, what they generated, what we kept, and how we checked it. AI-written code is labeled in Appendix A; full prompt log in Appendix B.]
 
-- Labeled AI-generated code in the listing.
-- Prompt log in the appendix (timestamps, suggested vs. accepted edits).
-
+// ============================================================
 = Documentation
+// ============================================================
 
-== System schematic
-#todo[Pico GPIOs $->$ encoder, VGA resistor DAC, MCP4822, LED, grounds.]
+== Wiring diagram
+#todo[Pico GPIOs to encoder, VGA resistor DAC, MCP4822, LED, and grounds.]
 
-== Software structure
-#todo[Thread / ISR / DMA flowchart; ball-update loop; encoder mode machine.]
+== Software flowchart
+#todo[One frame across both cores, and the encoder mode cycle.]
 
-== Key algorithms (commented excerpts)
-#todo[Paste only the non-obvious pieces here (collision, encoder FSM, DMA arming). Full listing in the appendix.]
+== Key code excerpts
+#todo[Short commented pieces: collision check, nearby-peg lookup, encoder interrupt, DMA setup. Full listing in Appendix A.]
 
+// ============================================================
 = Results
+// ============================================================
 
-== Frame timing and ball capacity
-#todo[Max balls at 60 fps. Frame time vs. $N$. Overclock if used.]
+== Speed
+#todo[Max balls at 60 fps. Physics / draw / frame time breakdown.]
 
-== Histogram vs. ideal binomial / Gaussian
-#todo[Screenshot of the board + histogram. Overlay or compare to $B(n=16, p=1/2)$.]
+== Accuracy
+#todo[Screenshot of the board and histogram, compared to the ideal $B(16, 1/2)$. Sources of error (missed pegs, balls passing through pegs, spawn bias, fixed-point rounding).]
 
-== Parameter sweeps
-#todo[Bounciness (and any 5730 extra param): qualitative effect on the distribution and on frame time.]
+== Effect of settings
+#todo[What changing bounciness, gravity, and ball radius does to the distribution and to frame time.]
 
-== Accuracy / error sources
-#todo[Missed pegs, tunneling, correlated bounces, spawn bias, fixed-point quantization.]
-
+// ============================================================
 = Conclusions
-#todo[Usability, what you would redo, complaints, suggested lab improvements.]
+// ============================================================
+#todo[How usable it was, what we would do differently, and feedback on the lab.]
 
-= Lab questions
+// ============================================================
+= Lab Questions
+// ============================================================
 
-== CLT assumptions on the physical model
-Our simulated board is not an idealized sequence of independent fair coin flips.
+== Question 1
+_Our physical model of the Galton Board differs from the idealized model. In order for the Central Limit Theorem to hold, all random numbers must be *independent*, *identically distributed*, and have *finite variance.* Which of these assumptions hold for our physical Galton Board model, and which do not? Why do we still see a distribution that approaches a Gaussian? (You needn't prove anything here, just try to identify the generalization of the CLT that is responsible for this)._
 
-*Independence.* #todo[Do successive left/right outcomes share state (velocity, last peg, walls)?]
+#todo[Answer.]
 
-*Identically distributed.* #todo[Same $p$ at every peg and for every ball? Gravity, bounciness, spawn jitter.]
+== Question 2
+_The Gaussian approximates the distribution under the Galton board *better* with *more rows in the board*. Why?_
 
-*Finite variance.* #todo[Almost certainly yes --- bounded bins.]
+#todo[Answer.]
 
-*Why a Gaussian still appears.* #todo[Name the relevant CLT generalization (e.g. Lindeberg--Feller / Lyapunov; weakly dependent variables). No proof required.]
+== Question 3
+_For your 16-row Galton Board, what is the mean and standard deviation of the Gaussian which approximates the resulting distribution (under the assumption that your Galton Board is "ideal")?_
 
-== Why more rows improve the Gaussian approximation
-#todo[De Moivre--Laplace / Berry--Esseen: error shrinks as $n$ (rows) grows. Binomial $->$ continuous envelope.]
+#todo[Answer.]
 
-== Mean and standard deviation for a 16-row ideal board
-For an ideal board with $n = 16$ rows and $p = 1/2$ left/right at each peg, the bin index $K ~ "Binomial"(n, p)$ satisfies
+// ============================================================
+#heading(numbering: none)[Appendix A --- Commented Program Listing]
+// ============================================================
+#todo[Full commented source with AI-written parts marked.]
 
-$
-  mu = n p = 8, wide
-  sigma = sqrt(n p (1-p)) = 2.
-$
-
-#todo[State how you number bins (0..16 vs. 1..17) so $mu$ is unambiguous. If you plot in pixels, convert.]
-
-= Appendix A --- Commented program listing
-#todo[Heavily commented source. Mark AI-generated regions.]
-
-// Example once you copy encoder.c next to this file:
 // #raw(read("../encoder.c"), lang: "c", block: true)
 
-= Appendix B --- AI prompt log
-#todo[For each prompt: time, words exchanged, edits suggested, insertions / deletions / modifications accepted.]
+// ============================================================
+#heading(numbering: none)[Appendix B --- AI Prompt Log]
+// ============================================================
+#todo[For each prompt: time, what was asked, edits suggested, and edits accepted.]
