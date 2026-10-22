@@ -35,7 +35,7 @@
 = Introduction
 // ============================================================
 
-A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one pef in each row an dlands in one of the bins at the borrom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of goinf right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit thearem says this turns into a bell-shaped Gaussian curve. In this lab, we built a figital version of a galton board on the RP2350 and showed it on a CGA screen. Balls fall through 16 rows and pefs and bounce off them using collision phyiscs. Everytime the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are bale to watch the Gaussian curve form. A rotar yencoder lers the user change the nuber of balls, the bounciness, the graviy, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran ~19k balls without missing timing. 
+A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one peg in each row and lands in one of the bins at the bottom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of going right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit thearem says this turns into a bell-shaped Gaussian curve. In this lab, we built a digital version of a galton board on the RP2350 and showed it on a VGA screen. Balls fall through 16 rows of pegs and bounce off them using collision phyiscs. Everytime the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are able to watch the Gaussian curve form. A rotary encoder lets the user change the number of balls, the bounciness, the graviy, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran ~19k balls without missing timing. 
 
 // ============================================================
 = Design and Testing Methods
@@ -50,7 +50,17 @@ A Galton board is a board covered in rows of pegs. A ball dropped in at the top 
 
 == Hardware
 #todo[Short description of each part and how it is wired.]
+The main components of the system are the RP2350, rotary encoder, VGA connector PCB, DAC, & the onboard LED. 
 
+The rotary encoder was the main way that users would be able to interact with the system. The encoder could be used both as a push button and a rotary knob. The push button let users cycle through different parameters of the galton board while the rotary knob let users numerically change values of the parameters themselves. 
+
+Since the rotary encoder is a mechanical device, it is prone to bouncing in the same way the keypad was in lab 1. Instead of using a debouncing software finite state machine, we chose to implement a solution in hardware. If we used the software implementation, we would had to run the FSM each time the encoder was rotated or pressed which would have increased the size of our interrupt service routine. This would be disadvantageous when we tried to run as many balls as possible at 60 FPS because it would add 4 additional steps to each ball we rendered. Instead, we used a 0.1 uF capacitor in parallel to ground with output A of the encoder. This would smooth out any  
+
+We also tied the onboard LED on GPIO 25 to a timer that would toggle the LED if the system could not finish a frame at 60 FPS. This would show us if we were actually hitting timing even if our eyes could not tell the difference on the VGA display. 
+
+We used the MCP4822 DAC to output a sound to the speaker. This is the same DAC that we used in the lab 1, but now we used it to output a thunk sound every time a ball hit a peg. 
+
+We interfaced with the VGA display in the same way we did in lab 1, using the PCB that we were provided.
 - Rotary encoder: channel A on GPIO 14, channel B on GPIO 15, pushbutton on GPIO 13.
 - VGA: Hsync on GPIO 16, Vsync on GPIO 17, color on GPIO 18--21 through the resistor DAC.
 - MCP4822 DAC on SPI0 (GPIO 4--7).
@@ -115,7 +125,8 @@ We measured success by the number of balls we could run while every frame still 
 
 *Radius-1 balls.* We shrank the balls to a radius of 1 pixel. We also added a shortcut to `drawCircle` for a radius of 1. The normal circle algorithm only lights 4 pixels at that size, but it draws each of them 3 times, so the shortcut just draws the 4 pixels once.
 
-*1-bit color.* At this point we ran out of memory, not time. The RP2350 has 520 KB of SRAM. The two VGA frame buffers at 4 bits per pixel took 2 #sym.times 153,600 = 307,200 bytes, and each ball takes 16 bytes (four fix15 numbers), so we could only fit about 12,500 balls. We changed the VGA driver and the RGB PIO program to use 1 bit per pixel (black or white). This shrinks each buffer to 38,400 bytes and frees 230,400 bytes, enough for about 14,400 more balls. The downside is that the screen can only show black and white.
+*1-bit color.* At this point we ran out of memory, not time. The RP2350 has 520 KB of SRAM. The two VGA frame buffers at 4 bits per pixel took 2 #sym.times 153,600 = 307,200 bytes, and each ball takes 16 bytes (four fix15 numbers), so we could only fit about 12,500 balls. Since we didn't need color, we changed the VGA driver & the PIO program to use only 1 bit per pixel. Previously, each byte stored 2 pixels to allow for 4-bit color, but we wanted to compress the information of 8 pixels into 1 byte. We still had to output 4 bits worth of information per pixel to the VGA, so in the PIO program, we would take each bit from the shift register and repeat it 4 times to the VGA. This also meant that we could only output either 0000 or 1111 to the VGA, which is black or white. Previously, we were using different colors to show the user what parameter they had selected to change, but after this change, we made the text blink to indicate which entry was selected. This change shrunk each buffer to 38,400 bytes and frees 230,400 bytes, enough for about 14,400 more balls. 
+
 
 *Overclock.* We raised the system clock from 150 MHz to 200 MHz. To keep the VGA timing correct, we changed the PIO clock dividers from 6 to 8 (so the PIO still runs at 25 MHz) and adjusted the delays in the RGB program.
 
