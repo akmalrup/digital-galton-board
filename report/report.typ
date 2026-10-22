@@ -76,26 +76,30 @@ We interfaced with the VGA display in the same way we did in lab 1, using the PC
 == Software
 
 === Ball physics
-#todo[Fixed-point format, gravity, walls, respawn, bounciness.]
+The ball physics are a modified version of the pseudocode on the course website. Each ball is stored as a struct of four fix15 numbers: its x and y position and its x and y velocity. Using fixed point instead of floats keeps most of the math as integer adds and multiplies, which are much cheaper on the RP2350.
+
+In our baseline implementation, the physics run in a simple loop. At the start of each frame, it does two passes over the balls. The first pass calls `updateBallPhysics` on every ball. This function adds the velocity to the position, adds gravity to the y velocity, and handles the edges of the screen. If a ball hits the left or right wall, it is placed back on the wall and its x velocity is flipped. If a ball falls past the bottom of the screen, we work out which histogram bin it landed in from its x position, add one to that bin and to the count of fallen balls, and then respawn the ball at the top of the board with zero velocity. The second pass checks every ball for collisions with the pegs, which is described in the next section.
 
 === Peg collisions
-#todo[How a hit is detected and handled.]
+In the baseline implementation, peg collisions are checked after every ball has been moved. For every one of the 136 pegs, we loop over every ball and call `checkBallCollision`. If the ball is touching the peg, we find the unit vector pointing from the peg to the ball, which needs two divides. The ball is moved out to the edge of the peg along that vector so it doesn't get stuck inside, and its velocity is reflected about that vector if it is moving into the peg. Finally, the collision starts the DMA thunk sound. 
 
-- Alpha-max-beta-min distance instead of `sqrt`.
-- Push the ball out of the peg, reflect its velocity, then scale by bounciness.
-- Only check the 1--2 pegs near each ball instead of all 136.
+This version is easy to follow, but it is slow. Every ball is checked against every peg every frame, so the collision pass does $136 times N$ checks for $N$ balls, even though a ball can only ever be near one or two pegs. On top of that, each real collision uses a `sqrt` and two divides in floating point, which the RP2350 has to convert to and from fix15. These are the main costs we went after in the optimizations section.
 
 === Board layout and histogram
-#todo[Peg grid and how balls are counted.]
+The board is a triangle of 136 pegs in 16 rows. The first row has one peg and each row after it has one more, so the last row has 16. The top peg sits at the center of the screen at $(320, 100)$, and the rows are 19 px apart. Within a row, the pegs are 38 px apart, so each peg sits directly between the two pegs below it. This means a ball that bounces off a peg lands on one of the two pegs in the next row, just like a real Galton board. The peg positions are computed once at startup and stored row by row in a statically allocated array, so peg number $c$ in row $r$ is at $x = 320 + (2c - r) dot 19$ and $y = 100 + 19r$. Balls spawn above the top peg at $x = 320$, so every ball starts by hitting the first peg.
 
-- 16 rows, 136 pegs, 19 px spacing.
-- 17 bins, 38 px wide, lined up with the bottom row of pegs.
-- Bars are scaled to the tallest bin and reset when a setting changes.
+The histogram at the bottom of the screen has 17 bins, one for each gap the ball can fall through below the last row: the 15 gaps between the 16 pegs, plus one on each side. Each bin is 38 px wide, and the bins are lined up so that their edges fall directly under the pegs in the bottom row, with the middle bin centered under the top peg. When a ball falls past the bottom of the screen, the physics thread finds its bin by subtracting the left edge of the histogram from the ball's x position and dividing by the bin width, then adds one to that bin.
+
+Each frame, the drawing thread scales the bars so that the tallest bin is 80 px high and the others are drawn in proportion to it. This way the histogram always fits under the board no matter how many balls have fallen. The count for each bin is printed above its bar. Whenever the user turns or presses the encoder, the encoder interrupt clears the histogram and the count of fallen balls, so the distribution starts over with the new settings.
 
 === DMA thunk sound
-#todo[Sound table, DMA setup, and how a collision starts the sound without slowing the physics.]
+Each time a ball hits a peg, the speaker plays a short thunk. Since collisions can happen thousands of times a second, we didn't want the CPU to spend any time sending audio samples to the DAC. Instead, the sound is played entirely by a DMA channel, and the physics thread only has to start it.
 
-- #todo[Does the thunk play on every collision or only on a new peg?]
+At startup, we fill a 256-entry table with one period of a sine wave multiplied by a decaying envelope, so each period starts loud and fades out. Each entry already has the MCP4822 configuration bits for channel A in its upper 4 bits, so it is a complete 16-bit SPI word that can be sent straight to the DAC. The table is aligned to 512 bytes so that the DMA channel can use ring-buffer wrapping on its read address.
+
+The DMA channel reads from the table and writes to the SPI data register, with the read address incrementing and the write address fixed. Instead of being paced by the SPI, it is paced by a DMA timer set to $1/3401$ of the system clock, which is about 44 kHz at 150 MHz. With the read address wrapping every 512 bytes, the channel loops through the table on its own without needing a second control channel to reset it. The channel is configured at startup but not started.
+
+When `checkBallCollision` detects a hit, it calls `dma_chirp`, which writes a transfer count of $5 times 256 = 1280$ samples to the channel and starts it. The DMA then plays five periods of the table (about 29 ms) and stops by itself. The thunk plays on every collision, not just the first time a ball reaches a new peg. Starting the sound is a single register write, so it costs the physics thread almost nothing. If another collision happens while a thunk is still playing, the channel is already busy and the new trigger is ignored, so with many balls the thunks blend into a steady rattle instead of piling up.
 
 === Encoder modes and on-screen display
 #todo[How the user changes settings and what the screen shows.]
