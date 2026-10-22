@@ -81,6 +81,8 @@ We interfaced with the VGA display in the same way we did in lab 1, using the PC
 === Peg collisions
 #todo[How a hit is detected and handled.]
 
+At first, we checked every ball against all 136 pegs in every frame. With N balls, that’s 136 × N collision checks per frame, and almost all of them were wasted, since a ball can only be touching a peg right next to it. To fix this, we used the fact that the pegs are in a fixed grid. A ball can only hit a peg if their centers are closer than the ball’s radius plus the peg’s radius, which is at most 16 pixels. The rows are 19 pixels apart, so only 2 rows at most can be that close to a ball vertically. The pegs in a row are 38 pixels apart, so only the closest peg in each row can be close enough horizontally. Using the ball’s position, we divide by the peg spacing to find which rows are nearby and which peg in each row is closest. Then we look up that peg in the array and run the exact collision check on just that peg. Balls that are above the top row or below the bottom row skip the check completely. This means each ball needs at most 2 collision checks instead of 136, which made Core 1’s physics loop much faster. It was one of our first big jumps in ball count, and it was part of the round of changes that took us from 850 to 3,000 balls at 60 fps.
+
 - Alpha-max-beta-min distance instead of `sqrt`.
 - Push the ball out of the peg, reflect its velocity, then scale by bounciness.
 - Only check the 1--2 pegs near each ball instead of all 136.
