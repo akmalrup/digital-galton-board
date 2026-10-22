@@ -21,9 +21,9 @@
   #text(size: 20pt, weight: "bold")[Digital Galton Board]
   #v(0.6em)
   #text(size: 12pt)[
-    #todo[Author 1] \u{00B7} #todo[Author 2] \
+    Akmal Rupasingha, Demetrios Gavalas, Parishee Bajaj\
     Cornell University \
-    #todo[Lab section / TA] \u{00B7} #datetime.today().display("[month repr:long] [day], [year]")
+    ECE 5730 Thursday 4:30 \u{00B7} #datetime.today().display("[month repr:long] [day], [year]")
   ]
 ]
 
@@ -35,18 +35,25 @@
 = Introduction
 // ============================================================
 
-A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one peg in each row and lands in one of the bins at the bottom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of going right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit thearem says this turns into a bell-shaped Gaussian curve. In this lab, we built a digital version of a galton board on the RP2350 and showed it on a VGA screen. Balls fall through 16 rows of pegs and bounce off them using collision phyiscs. Everytime the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are able to watch the Gaussian curve form. A rotary encoder lets the user change the number of balls, the bounciness, the graviy, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran ~19k balls without missing timing. 
+A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one peg in each row and lands in one of the bins at the bottom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of going right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit theorem says this turns into a bell-shaped Gaussian curve. In this lab, we built a digital version of a galton board on the RP2350 and showed it on a VGA screen. Balls fall through 16 rows of pegs and bounce off them using collision physics. Every time the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are able to watch the Gaussian curve form. A rotary encoder lets the user change the number of balls, the bounciness, the gravity, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran ~19k balls without missing timing. 
 
 // ============================================================
 = Design and Testing Methods
 // ============================================================
 
 == System overview
-#todo[How the work is split between the two cores and why.]
 
-- Core 1 runs the physics for every ball. Core 0 draws the pegs, histogram, text, and balls.
-- Two semaphores keep the cores in step once per frame.
-- System clock overclocked to 200 MHz.
+The final baseline system uses the Pico 2 board with two peripheral devices. The first is a rotary encoder, which exposes terminals which tell us the direction of rotation and whether or not the encoder is pushed down. This encoder is used for user input. The second is the VGA screen. The VGA connector connects to the board via adjacent GPIO pins. 
+
+The program is split into several different interrupt handlers and threads. The peripherals are handled by interrupts. The rotary encoder interrupt is triggered by the debounced A pin. VGA interrupts are triggered on the VSYNC and HSYNC pins to keep timing on the VGA screen accurate. 
+
+The graphics library uses a double-buffered system. One buffer is the active buffer which is written to the monitor by the PIO state machine example code. The other buffer is written to by the graphics library. At the end of a frame time, the buffer pointers are swapped. This prevents the screen tearing when graphics are drawn as the pixels are being read onto the screen. 
+
+In our baseline implementation, all the graphics are drawn in a single thread. The thread generates the same peg positions each time, and then it reads the ball positions from a statically allocated array of structs. 
+
+The ball physics are handled in a separate thread. This thread calls two important functions, one function updates gravity and edge handling for all the balls. The other thread handles collisions between a single ball and a single peg. In our baseline implementation, each ball is checked against every peg for collisions. 
+
+The rotary encoder interrupt handlers handle rotations and pushes of the encoder. A push changes the mode of the encoder control to control different parameters, stored as an enum. Then, rotating the encoder triggers its own handler, which checks the other encoder pin level to increment or decrement the counter value. 
 
 == Hardware
 #todo[Short description of each part and how it is wired.]
