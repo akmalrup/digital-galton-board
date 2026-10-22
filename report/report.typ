@@ -123,7 +123,7 @@ We measured success by the number of balls we could run while every frame still 
     [Faster collisions], [Outline-only drawing, alpha-max-beta-min distance, only check nearby pegs], [3,000],
     [Radius-1 balls], [Balls shrunk to 1 px with a fast drawing path], [10,000],
     [1-bit color], [Frame buffers shrunk to 1 bit per pixel to free memory], [14,000],
-    [Overclock], [System clock raised from 150 MHz to 200 MHz], [#todo[number]],
+    [Overclock], [System clock raised from 150 MHz to 200 MHz], [19,000],
   ),
   caption: [Maximum number of balls at 60 fps after each optimization.],
 ) <tab:opt>
@@ -209,7 +209,7 @@ We measured success by the number of balls we could run while every frame still 
 == Accuracy
 #todo[Screenshot of the board and histogram, compared to the ideal $B(16, 1/2)$. Sources of error (missed pegs, balls passing through pegs, spawn bias, fixed-point rounding).]
 
-Visually, the galton board seemed to be accurate and result in the expected Gaussian distribution. Although, 
+Visually, the galton board seemed to be accurate and result in the expected Gaussian distribution. Although, we assume that using fixed point instead of floating point would likely have caused some rounding errors & loss in precision. 
 
 == Effect of settings
 As we increased ball radius, we decreased the maximum number of balls we could run at 60 fps. This was not only because the system spent more time drawing more pixels for each ball, but also because the larger balls had more frequent collisions with pegs and each other. This would lead to our physics thread running more often and taking longer to finish.
