@@ -35,7 +35,7 @@
 = Introduction
 // ============================================================
 
-A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one peg in each row and lands in one of the bins at the bottom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of going right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit theorem says this turns into a bell-shaped Gaussian curve. In this lab, we built a digital version of a galton board on the RP2350 and showed it on a VGA screen. Balls fall through 16 rows of pegs and bounce off them using collision physics. Every time the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are able to watch the Gaussian curve form. A rotary encoder lets the user change the number of balls, the bounciness, the gravity, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran ~19k balls without missing timing. 
+A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one peg in each row and lands in one of the bins at the bottom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of going right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit theorem says this turns into a bell-shaped Gaussian curve. In this lab, we built a digital version of a galton board on the RP2350 and showed it on a VGA screen. Balls fall through 16 rows of pegs and bounce off them using collision physics. Every time the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are able to watch the Gaussian curve form. A rotary encoder lets the user change the number of balls, the bounciness, the gravity, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran \~19k balls without missing timing. 
 
 // ============================================================
 = Design and Testing Methods
@@ -100,6 +100,7 @@ We interfaced with the VGA display in the same way we did in lab 1, using the PC
 === Encoder modes and on-screen display
 #todo[How the user changes settings and what the screen shows.]
 
+
 - Button cycles: number of balls #sym.arrow bounciness #sym.arrow gravity #sym.arrow ball radius. #todo[How is the active mode shown now that the screen is 1-bit (black and white)?]
 - Screen shows balls fallen, seconds since boot, current settings, and per-core timing.
 
@@ -116,7 +117,7 @@ We measured success by the number of balls we could run while every frame still 
     [Starting point], [Physics on Core 1, drawing on Core 0], [450],
     [Semaphore fix], [Core 0 draws balls while Core 1 runs physics], [850],
     [Faster collisions], [Outline-only drawing, alpha-max-beta-min distance, only check nearby pegs], [3,000],
-    [Radius-1 balls], [Balls shrunk to 1 px with a fast drawing path], [#todo[$tilde$10,000? confirm]],
+    [Radius-1 balls], [Balls shrunk to 1 px with a fast drawing path], [10,000],
     [1-bit color], [Frame buffers shrunk to 1 bit per pixel to free memory], [14,000],
     [Overclock], [System clock raised from 150 MHz to 200 MHz], [#todo[number]],
   ),
