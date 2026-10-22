@@ -111,7 +111,7 @@ To read the knob, we set an interrupt on the falling edge of channel A. When it 
 
 Any time the user turns the knob or presses the button, the histogram and the count of fallen balls reset to zero. That way the histogram only shows balls that fell with the current settings.
 
-The top-left corner of the screen shows the total number of balls that have fallen, the seconds since boot, and the current value of all four settings. The active setting was originally highlighted in blue. After we switched the display to 1-bit color to save memory, the screen could only show black and white, so the highlight stopped showing up. Below the settings, the screen shows timing for each frame. That includes how long Core 1 spent on physics and how long Core 0 spent drawing, out of the 60hz frame budget. We used these timers to find what was slowing us down while we optimized.
+The top-left corner of the screen shows the number of balls that have fallen, the seconds since boot, and the current value of each setting. Below that, it shows how long Core 1 spent on physics and how long Core 0 spent drawing in the last frame, out of the 16.67 ms budget. We used these timers to find the bottleneck while optimizing.
 
 == Optimizations
 We measured success by the number of balls we could run while every frame still finished within 16.67 ms (60 fps), which means the deadline LED stays off. We recorded the new maximum after each round of changes. @tab:opt sums up the steps, and the paragraphs below explain each one.
