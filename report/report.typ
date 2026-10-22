@@ -202,6 +202,8 @@ We measured success by the number of balls we could run while every frame still 
 // ============================================================
 #todo[How usable it was, what we would do differently, and feedback on the lab.]
 
+One thing we would change is how the screen shows which setting the user is editing. At first, we highlighted the active setting in blue. After we switched the display to 1-bit color to save memory, the screen could only show black and white, so the blue highlight showed up as white and disappeared. If we did this again, we would put an arrow/dot in front of the active setting instead. This only uses text, so it works in black and white and doesn’t cost extra memory. It would make it much easier for the user to tell which setting the knob is about to change.
+
 // ============================================================
 = Lab Questions
 // ============================================================
