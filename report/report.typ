@@ -226,12 +226,13 @@ We used Claude Code and Cursor for help programming and debugging. We prompted t
 ) <fig:final-product>
 
 == Speed
-#todo[Final max balls at 60 fps (see @tab:opt for how we got there). Physics / draw / frame time breakdown from the on-screen timers.]
+To hit 60 FPS, each frame would have be finished in 16.67 ms. We measured the time we spent in both the animation and physics loops. With all of our optimizations, we ended up being graphics bound. The physics thread would take 15ms to finish whereas our graphics thread was running for 16.6ms. 
 
 == Accuracy
-#todo[Screenshot of the board and histogram, compared to the ideal $B(16, 1/2)$. Sources of error (missed pegs, balls passing through pegs, spawn bias, fixed-point rounding).]
 
 Visually, the galton board seemed to be accurate and result in the expected Gaussian distribution. Although, we assume that using fixed point instead of floating point would likely have caused some rounding errors & loss in precision. 
+
+Our system followed a Gaussian distribution in most cases, but we noticed that if we changed our bounciness parameter, then we would see different distributions. Addiitonally, we also noticed that the two bins on either edge of the histogram were slightly higher than expected and we assumed that this was because of the edge condition we picked. We made all of the balls that hit the edge of the screen bounce back inwards which could have caused more balls to land in the edge bins.
 
 == Effect of settings
 As we increased ball radius, we decreased the maximum number of balls we could run at 60 fps. This was not only because the system spent more time drawing more pixels for each ball, but also because the larger balls had more frequent collisions with pegs and each other. This would lead to our physics thread running more often and taking longer to finish.
@@ -243,7 +244,6 @@ Changing the gravity added a downward velocity to the balls. We didn't notice a 
 // ============================================================
 = Conclusions
 // ============================================================
-#todo[How usable it was, what we would do differently, and feedback on the lab.]
 
 The system in all seemed to be user-friendly, but one thing we would change is how the screen indicates what parameter is selected to change. At first, we highlighted the active setting in blue. After we switched the display to 1-bit color to save memory, the screen could only show black and white, so the blue highlight showed up as white and disappeared. If we did this again, we would put an arrow/dot in front of the active setting instead. This only uses text, so it works in black and white and doesn’t cost extra memory. It would make it much easier for the user to tell which setting the knob is about to change.
 
@@ -273,7 +273,6 @@ where bins are numbered 0 to 16. So the curve is centered on the middle bin (bin
 // ============================================================
 #heading(numbering: none)[Appendix A --- Commented Program Listing]
 // ============================================================
-#todo[Full commented source with AI-written parts marked.]
 
 // Keep the pasted listing literal and apply formatting only inside this block.
 #block(
