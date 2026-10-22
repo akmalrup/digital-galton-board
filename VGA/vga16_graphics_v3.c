@@ -413,6 +413,7 @@ void drawVLine(short x, short y, short h, char color) {
     }
 }
 
+//start AI-generated code
 // Horizontal line: draw through the packed 1-bit pixel routine.
 void drawHLine(int x, int y, int w, char color) {
   if (y < 0 || y >= _height || w <= 0) return;
@@ -425,6 +426,7 @@ void drawHLine(int x, int y, int w, char color) {
     drawPixel(x, y, color);
   }
 }
+//end Ai-generated code
 
 // general line drawing
 // Bresenham's algorithm - thx wikipedia and thx Bruce!

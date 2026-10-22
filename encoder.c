@@ -1,23 +1,5 @@
 /**
  * ECE 4760 / 5730 - Lab 2 (Digital Galton Board)
- *
- * Rotary encoder interface + VGA ball & peg simulation:
- *  - Displays rotary encoder position on VGA display
- *  - Simulates one ball bouncing off a central peg under gravity
- *  - Serial console interface allows changing ball color (1-15)
- *
- * HARDWARE CONNECTIONS
- *  - GPIO 14 ---> Encoder channel A
- *  - GPIO 15 ---> Encoder channel B
- *  - GND     ---> Encoder COM
- *
- *  - GPIO 16 ---> VGA Hsync
- *  - GPIO 17 ---> VGA Vsync
- *  - GPIO 18 ---> VGA Green lo-bit --> 470 ohm resistor --> VGA_Green
- *  - GPIO 19 ---> VGA Green hi-bit --> 330 ohm resistor --> VGA_Green
- *  - GPIO 20 ---> 330 ohm resistor ---> VGA-Blue
- *  - GPIO 21 ---> 330 ohm resistor ---> VGA-Red
- *  - RP2040 GND ---> VGA-GND
  */
 
 #include "VGA/vga16_graphics_v3.h"
@@ -78,7 +60,7 @@ __attribute__((aligned(512))) unsigned short DAC_data[sine_table_size];
 #define SPI_PORT spi0
 
 
-// histogram 
+// histogram parameters
 
 #define HIST_HEIGHT 80
 #define NUM_BINS    17
@@ -94,6 +76,7 @@ void dma_chirp(void) {
 }
 
 void init_dma_chirp(void) {
+    //fills in sine table with decaying envelope
     for (int i = 0; i < sine_table_size; i++) {
         float progress = (float)i / (float)sine_table_size;
         float envelope = (1.0f - progress) * expf(-2.5f * progress);
@@ -101,6 +84,7 @@ void init_dma_chirp(void) {
         DAC_data[i] = (unsigned short)(DAC_config_chan_A | (raw_sin & 0x0FFF));
     }
 
+    //initializes SPI for the DAC
     spi_init(SPI_PORT, 20000000);
     spi_set_format(SPI_PORT, 16, 0, 0, 0);
     gpio_set_function(PIN_MISO, GPIO_FUNC_SPI);
@@ -112,6 +96,7 @@ void init_dma_chirp(void) {
     uint16_t neutral = DAC_config_chan_A | 2048;
     spi_write16_blocking(SPI_PORT, &neutral, 1);
 
+    //initialize timer for DMA channel transaction
     int audio_timer = dma_claim_unused_timer(true);
     dma_timer_set_fraction(audio_timer, 1, 3401);
 
@@ -134,7 +119,7 @@ void init_dma_chirp(void) {
     );
 }
 
-
+//fixed point functions
 typedef signed int fix15;
 #define multfix15(a,b) ((fix15)((((signed long long)(a))*((signed long long)(b)))>>15))
 #define float2fix15(a) ((fix15)((a)*32768.0))
@@ -154,6 +139,7 @@ volatile int num_balls = 18000;
 volatile int fallen_balls = 0;
 volatile int encoder_count = 0;
 
+//set ball_radius to 1 to optimize
 volatile int ball_radius = 1;
 
 typedef enum {
@@ -178,6 +164,7 @@ void reset_histogram() {
 
 void gpio_callback(uint gpio, uint32_t event_mask) {
     if (gpio == ENC_A) {
+        //checks state of B to see what way the encoder is being turned
         int enc_b_read = gpio_get(ENC_B);
         int enc_incr = (enc_b_read) ? 1 : -1;
         encoder_count += enc_incr;
@@ -223,10 +210,12 @@ void gpio_callback(uint gpio, uint32_t event_mask) {
         }
     }
 
+    //reset histogram & total balls each time the total number of balls changes
     reset_histogram();
     fallen_balls = 0;
 }
 
+//typdef to hold position & velocity of each ball
 typedef struct {
     fix15 x;
     fix15 y;
@@ -609,6 +598,7 @@ struct timespec initial_time = {
 
 
 int main() {
+    //overclocking to 200 MHz
     set_sys_clock_khz(200000, true);
     stdio_init_all();
     initVGA();
@@ -629,7 +619,6 @@ int main() {
             peg_index++;
         }
     }
-
 
     gpio_init(ENC_A);
     gpio_init(ENC_B);
