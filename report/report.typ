@@ -178,8 +178,13 @@ We measured success by the number of balls we could run while every frame still 
 == Wiring diagram
 #todo[Pico GPIOs to encoder, VGA resistor DAC, MCP4822, LED, and grounds.]
 
-== Software flowchart
-#todo[One frame across both cores, and the encoder mode cycle.]
+== Software System Diagram
+#figure(
+  image("figures/frame-flowchart.png", width: 90%),
+  caption: [One frame of the program. Core 0 draws while Core 1 runs the physics.],
+) <fig:flow>
+
+#todo[Encoder mode cycle diagram.]
 
 
 // ============================================================
