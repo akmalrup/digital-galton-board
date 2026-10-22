@@ -98,11 +98,14 @@ We interfaced with the VGA display in the same way we did in lab 1, using the PC
 - #todo[Does the thunk play on every collision or only on a new peg?]
 
 === Encoder modes and on-screen display
-#todo[How the user changes settings and what the screen shows.]
 
+The user controls the simulation with the rotary encoder. Turning the knob changes a setting, and pressing it down switches which setting is being changed. Each press moves to the next mode in this order: number of balls, bounciness, gravity, and ball radius. After ball radius, it goes back to number of balls. The button uses a falling-edge interrupt.
 
-- Button cycles: number of balls #sym.arrow bounciness #sym.arrow gravity #sym.arrow ball radius. #todo[How is the active mode shown now that the screen is 1-bit (black and white)?]
-- Screen shows balls fallen, seconds since boot, current settings, and per-core timing.
+To read the knob, we set an interrupt on the falling edge of channel A. When it fires, we read channel B. If B is high, the knob turned one way, and we add 1. If B is low, it turned the other way, and we subtract 1. Each click changes the current setting by one step. Number of balls changes by 1, from 0 up to 24,000. Bounciness changes by 0.01, from 0 to 1.00. Gravity changes by 0.01 and is allowed to go negative. With negative gravity, the balls “fall” upward and pile up at the top of the screen. Ball radius changes by 1 pixel, from 1 to 10.
+
+Any time the user turns the knob or presses the button, the histogram and the count of fallen balls reset to zero. That way the histogram only shows balls that fell with the current settings.
+
+The top-left corner of the screen shows the total number of balls that have fallen, the seconds since boot, and the current value of all four settings. The active setting was originally highlighted in blue. After we switched the display to 1-bit color to save memory, the screen could only show black and white, so the highlight stopped showing up. Below the settings, the screen shows timing for each frame. That includes how long Core 1 spent on physics and how long Core 0 spent drawing, out of the 60hz frame budget. We used these timers to find what was slowing us down while we optimized.
 
 == Optimizations
 We measured success by the number of balls we could run while every frame still finished within 16.67 ms (60 fps), which means the deadline LED stays off. We recorded the new maximum after each round of changes. @tab:opt sums up the steps, and the paragraphs below explain each one.
