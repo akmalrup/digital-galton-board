@@ -190,7 +190,7 @@ We measured success by the number of balls we could run while every frame still 
 )
 
 == AI use
-#todo[Tools used, what they generated, what we kept, and how we checked it. AI-written code is labeled in Appendix A; full prompt log in Appendix B.]
+We used Claude Code and Cursor for help programming and debugging. We prompted the tools asking for guidance on implementing certain features, debugging, and refactoring code to run experiments quickly. For example, while we ended up reverting the change, prompting the agent to split our graphics thread into separate text, histogram, and ball drawing threads made it very easy to quickly prototype the change. 
 
 // ============================================================
 = Documentation
