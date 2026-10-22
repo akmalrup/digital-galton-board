@@ -35,7 +35,7 @@
 = Introduction
 // ============================================================
 
-A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one peg in each row and lands in one of the bins at the bottom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of going right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit theorem says this turns into a bell-shaped Gaussian curve. In this lab, we built a digital version of a galton board on the RP2350 and showed it on a VGA screen. Balls fall through 16 rows of pegs and bounce off them using collision physics. Every time the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are able to watch the Gaussian curve form. A rotary encoder lets the user change the number of balls, the bounciness, the gravity, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran ~19k balls without missing timing. 
+A Galton board is a board covered in rows of pegs. A ball dropped in at the top bounces off one peg in each row and lands in one of the bins at the bottom. In an ideal board, each bounce is like a coin flip where a 50%  chance of going left and a 50% chance of going right is possible. That means the number of balls in each bin follows a binomial distribution and with enough rows and balls, the central limit theorem says this turns into a bell-shaped Gaussian curve. In this lab, we built a digital version of a galton board on the RP2350 and showed it on a VGA screen. Balls fall through 16 rows of pegs and bounce off them using collision physics. Every time the ball hits a peg it makes a sounds that is played with DMA - this is done so that it does not slow the CPU down. A live histogram at the bottom of the screen counts how many balls land in each bin so that you are able to watch the Gaussian curve form. A rotary encoder lets the user change the number of balls, the bounciness, the gravity, and the ball while the animation runs. Our main goal was to animate as many balls as possible at 60 FPS, and our final design ran \~19k balls without missing timing. 
 
 // ============================================================
 = Design and Testing Methods
@@ -85,6 +85,8 @@ In the baseline implementation, peg collisions are checked after every ball has 
 
 This version is easy to follow, but it is slow. Every ball is checked against every peg every frame, so the collision pass does $136 times N$ checks for $N$ balls, even though a ball can only ever be near one or two pegs. On top of that, each real collision uses a `sqrt` and two divides in floating point, which the RP2350 has to convert to and from fix15. These are the main costs we went after in the optimizations section.
 
+To cut down the number of checks, we used the fact that the pegs are in a fixed grid. A ball can only hit a peg if their centers are closer than the ball’s radius plus the peg’s radius, which is at most 16 pixels. The rows are 19 pixels apart, so only 2 rows at most can be that close to a ball vertically. The pegs in a row are 38 pixels apart, so only the closest peg in each row can be close enough horizontally. Using the ball’s position, we divide by the peg spacing to find which rows are nearby and which peg in each row is closest. Then we look up that peg in the array and run the exact collision check on just that peg. Balls that are above the top row or below the bottom row skip the check completely. This means each ball needs at most 2 collision checks instead of 136, which made Core 1’s physics loop much faster. It was one of our first big jumps in ball count, and it was part of the round of changes that took us from 850 to 3,000 balls.
+
 === Board layout and histogram
 The board is a triangle of 136 pegs in 16 rows. The first row has one peg and each row after it has one more, so the last row has 16. The top peg sits at the center of the screen at $(320, 100)$, and the rows are 19 px apart. Within a row, the pegs are 38 px apart, so each peg sits directly between the two pegs below it. This means a ball that bounces off a peg lands on one of the two pegs in the next row, just like a real Galton board. The peg positions are computed once at startup and stored row by row in a statically allocated array, so peg number $c$ in row $r$ is at $x = 320 + (2c - r) dot 19$ and $y = 100 + 19r$. Balls spawn above the top peg at $x = 320$, so every ball starts by hitting the first peg.
 
@@ -102,10 +104,14 @@ The DMA channel reads from the table and writes to the SPI data register, with t
 When `checkBallCollision` detects a hit, it calls `dma_chirp`, which writes a transfer count of $5 times 256 = 1280$ samples to the channel and starts it. The DMA then plays five periods of the table (about 29 ms) and stops by itself. The thunk plays on every collision, not just the first time a ball reaches a new peg. Starting the sound is a single register write, so it costs the physics thread almost nothing. If another collision happens while a thunk is still playing, the channel is already busy and the new trigger is ignored, so with many balls the thunks blend into a steady rattle instead of piling up.
 
 === Encoder modes and on-screen display
-#todo[How the user changes settings and what the screen shows.]
 
-- Button cycles: number of balls #sym.arrow bounciness #sym.arrow gravity #sym.arrow ball radius. #todo[How is the active mode shown now that the screen is 1-bit (black and white)?]
-- Screen shows balls fallen, seconds since boot, current settings, and per-core timing.
+The user controls the simulation with the rotary encoder. Turning the knob changes a setting, and pressing it down switches which setting is being changed. Each press moves to the next mode in this order: number of balls, bounciness, gravity, and ball radius. After ball radius, it goes back to number of balls. The button uses a falling-edge interrupt.
+
+To read the knob, we set an interrupt on the falling edge of channel A. When it fires, we read channel B. If B is high, the knob turned one way, and we add 1. If B is low, it turned the other way, and we subtract 1. Each click changes the current setting by one step. Number of balls changes by 1, from 0 up to 24,000. Bounciness changes by 0.01, from 0 to 1.00. Gravity changes by 0.01 and is allowed to go negative. With negative gravity, the balls “fall” upward and pile up at the top of the screen. Ball radius changes by 1 pixel, from 1 to 10.
+
+Any time the user turns the knob or presses the button, the histogram and the count of fallen balls reset to zero. That way the histogram only shows balls that fell with the current settings.
+
+The top-left corner of the screen shows the total number of balls that have fallen, the seconds since boot, and the current value of all four settings. The active setting was originally highlighted in blue. After we switched the display to 1-bit color to save memory, the screen could only show black and white, so the highlight stopped showing up. Below the settings, the screen shows timing for each frame. That includes how long Core 1 spent on physics and how long Core 0 spent drawing, out of the 60hz frame budget. We used these timers to find what was slowing us down while we optimized.
 
 == Optimizations
 We measured success by the number of balls we could run while every frame still finished within 16.67 ms (60 fps), which means the deadline LED stays off. We recorded the new maximum after each round of changes. @tab:opt sums up the steps, and the paragraphs below explain each one.
@@ -120,7 +126,7 @@ We measured success by the number of balls we could run while every frame still 
     [Starting point], [Physics on Core 1, drawing on Core 0], [450],
     [Semaphore fix], [Core 0 draws balls while Core 1 runs physics], [850],
     [Faster collisions], [Outline-only drawing, alpha-max-beta-min distance, only check nearby pegs], [3,000],
-    [Radius-1 balls], [Balls shrunk to 1 px with a fast drawing path], [#todo[$tilde$10,000? confirm]],
+    [Radius-1 balls], [Balls shrunk to 1 px with a fast drawing path], [10,000],
     [1-bit color], [Frame buffers shrunk to 1 bit per pixel to free memory], [14,000],
     [Overclock], [System clock raised from 150 MHz to 200 MHz], [#todo[number]],
   ),
@@ -146,7 +152,6 @@ We measured success by the number of balls we could run while every frame still 
 - Separate protothreads for the text and the histogram
 
 == Testing
-#todo[Fill in which tests were run. Measured outcomes go in Results.]
 
 #figure(
   table(
@@ -155,15 +160,14 @@ We measured success by the number of balls we could run while every frame still 
     align: left,
     stroke: 0.5pt,
     table.header[*Requirement*][*Test*][*Pass criterion*],
-    [Encoder CW / CCW], [Rotate while watching VGA count], [Increments / decrements reliably],
-    [One ball, one peg (Wk 1)], [Drop, collide, thunk, respawn], [Audible thunk; gravity; auto-respawn],
-    [16-row board, $>=$10 balls (Wk 2)], [Watch VGA], [All collide, thunk, respawn],
+    [Encoder rotating CW/CCW], [Rotate while watching VGA count], [Increments / decrements reliably],
+    [One ball, one peg], [Drop, collide, thunk, respawn], [Audible thunk; gravity; auto-respawn],
+    [16-row board $>=$ 10 balls], [Watch VGA], [All collide, thunk, respawn],
     [Live stats], [VGA overlay], [Active balls, total fallen, time since boot],
     [Histogram], [Let balls build up], [17 bins; bars fit under the board],
-    [Max balls @ 60 fps (Wk 3)], [Raise ball count, watch LED], [LED off at $N_"max"$],
-    [Encoder modes], [Click through modes], [VGA shows mode; rotating edits that setting],
+    [Encoder modes], [Click through modes], [VGA shows mode; rotating encoder edits that setting],
     [Setting change resets stats], [Turn encoder mid-run], [Histogram and total fallen go to 0],
-    [Deadline LED], [Overload the system], [LED on only when frame $>$ 16.67 ms],
+    [Deadline LED], [Overload the system (increase ball count, increase radius, etc.)], [LED on only when frame $>$ 16.67 ms],
   ),
   caption: [Verification tests.],
 )
@@ -178,11 +182,14 @@ We measured success by the number of balls we could run while every frame still 
 == Wiring diagram
 #todo[Pico GPIOs to encoder, VGA resistor DAC, MCP4822, LED, and grounds.]
 
-== Software flowchart
-#todo[One frame across both cores, and the encoder mode cycle.]
+== Software System Diagram
+#figure(
+  image("figures/frame-flowchart.png", width: 90%),
+  caption: [One frame of the program. Core 0 draws while Core 1 runs the physics.],
+) <fig:flow>
 
-== Key code excerpts
-#todo[Short commented pieces: collision check, nearby-peg lookup, encoder interrupt, DMA setup. Full listing in Appendix A.]
+#todo[Encoder mode cycle diagram.]
+
 
 // ============================================================
 = Results
@@ -201,6 +208,8 @@ We measured success by the number of balls we could run while every frame still 
 = Conclusions
 // ============================================================
 #todo[How usable it was, what we would do differently, and feedback on the lab.]
+
+One thing we would change is how the screen shows which setting the user is editing. At first, we highlighted the active setting in blue. After we switched the display to 1-bit color to save memory, the screen could only show black and white, so the blue highlight showed up as white and disappeared. If we did this again, we would put an arrow/dot in front of the active setting instead. This only uses text, so it works in black and white and doesn’t cost extra memory. It would make it much easier for the user to tell which setting the knob is about to change.
 
 // ============================================================
 = Lab Questions
