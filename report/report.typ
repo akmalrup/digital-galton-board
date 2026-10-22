@@ -111,7 +111,7 @@ To read the knob, we set an interrupt on the falling edge of channel A. When it 
 
 Any time the user turns the knob or presses the button, the histogram and the count of fallen balls reset to zero. That way the histogram only shows balls that fell with the current settings.
 
-The top-left corner of the screen shows the number of balls that have fallen, the seconds since boot, and the current value of each setting. Below that, it shows how long Core 1 spent on physics and how long Core 0 spent drawing in the last frame, out of the 16.67 ms budget. We used these timers to find the bottleneck while optimizing.
+The top-left corner of the screen shows the total number of balls that have fallen, the seconds since boot, and the current value of all four settings. The active setting was originally highlighted in blue. After we switched the display to 1-bit color to save memory, the screen could only show black and white, so the highlight stopped showing up. Below the settings, the screen shows timing for each frame. That includes how long Core 1 spent on physics and how long Core 0 spent drawing, out of the 60hz frame budget. We used these timers to find what was slowing us down while we optimized.
 
 == Optimizations
 We measured success by the number of balls we could run while every frame still finished within 16.67 ms (60 fps), which means the deadline LED stays off. We recorded the new maximum after each round of changes. @tab:opt sums up the steps, and the paragraphs below explain each one.
@@ -218,17 +218,20 @@ One thing we would change is how the screen shows which setting the user is edit
 == Question 1
 _Our physical model of the Galton Board differs from the idealized model. In order for the Central Limit Theorem to hold, all random numbers must be *independent*, *identically distributed*, and have *finite variance.* Which of these assumptions hold for our physical Galton Board model, and which do not? Why do we still see a distribution that approaches a Gaussian? (You needn't prove anything here, just try to identify the generalization of the CLT that is responsible for this)._
 
-#todo[Answer.]
+In our galton board, the random variable is the direction the ball takes at each peg. For our Galton board, the only one of these assumptions which actually holds is that the variance is finite, because the force on the ball is always bounded and so the amount the ball can move sideways is finite. The impulses on the ball are not independent (the previous bounce affects the current bounce) nor identically distributed (some bounces can skew left or right). However, while they aren't independent, they are weakly dependent. When summing many bounded, weakly dependent steps the randomness seems to dominate, and result in a Gaussian distribution.  
 
 == Question 2
 _The Gaussian approximates the distribution under the Galton board *better* with *more rows in the board*. Why?_
-
-#todo[Answer.]
+With more rows in the board, there are more random variables that each ball's final position depends on. The central limit theorem holds for repeatedly sampling a random variable, so adding rows is effectively adding samples of the random variable.
 
 == Question 3
 _For your 16-row Galton Board, what is the mean and standard deviation of the Gaussian which approximates the resulting distribution (under the assumption that your Galton Board is "ideal")?_
 
-#todo[Answer.]
+In an ideal board, each of the 16 rows is an independent random variable with $p = 1/2$ of going right, so the bin a ball lands in follows a binomial distribution $B(16, 1/2)$. The Gaussian that approximates it has
+
+$ mu = n p = 16 dot 1/2 = 8, quad sigma = sqrt(n p (1 - p)) = sqrt(16 dot 1/2 dot 1/2) = 2 $
+
+where bins are numbered 0 to 16. So the curve is centered on the middle bin (bin 8), and about 68% of balls should land within 2 bins of it. On our screen, where each bin is 38 px wide, this is a mean of $x = 320$ px (under the top peg) and a standard deviation of 76 px.
 
 // ============================================================
 #heading(numbering: none)[Appendix A --- Commented Program Listing]
