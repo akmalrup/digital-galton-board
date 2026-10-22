@@ -146,7 +146,6 @@ We measured success by the number of balls we could run while every frame still 
 - Separate protothreads for the text and the histogram
 
 == Testing
-#todo[Fill in which tests were run. Measured outcomes go in Results.]
 
 #figure(
   table(
@@ -155,15 +154,14 @@ We measured success by the number of balls we could run while every frame still 
     align: left,
     stroke: 0.5pt,
     table.header[*Requirement*][*Test*][*Pass criterion*],
-    [Encoder CW / CCW], [Rotate while watching VGA count], [Increments / decrements reliably],
-    [One ball, one peg (Wk 1)], [Drop, collide, thunk, respawn], [Audible thunk; gravity; auto-respawn],
-    [16-row board, $>=$10 balls (Wk 2)], [Watch VGA], [All collide, thunk, respawn],
+    [Encoder rotating CW/CCW], [Rotate while watching VGA count], [Increments / decrements reliably],
+    [One ball, one peg], [Drop, collide, thunk, respawn], [Audible thunk; gravity; auto-respawn],
+    [16-row board $>=$ 10 balls], [Watch VGA], [All collide, thunk, respawn],
     [Live stats], [VGA overlay], [Active balls, total fallen, time since boot],
     [Histogram], [Let balls build up], [17 bins; bars fit under the board],
-    [Max balls @ 60 fps (Wk 3)], [Raise ball count, watch LED], [LED off at $N_"max"$],
-    [Encoder modes], [Click through modes], [VGA shows mode; rotating edits that setting],
+    [Encoder modes], [Click through modes], [VGA shows mode; rotating encoder edits that setting],
     [Setting change resets stats], [Turn encoder mid-run], [Histogram and total fallen go to 0],
-    [Deadline LED], [Overload the system], [LED on only when frame $>$ 16.67 ms],
+    [Deadline LED], [Overload the system (increase ball count, increase radius, etc.)], [LED on only when frame $>$ 16.67 ms],
   ),
   caption: [Verification tests.],
 )
@@ -181,8 +179,6 @@ We measured success by the number of balls we could run while every frame still 
 == Software flowchart
 #todo[One frame across both cores, and the encoder mode cycle.]
 
-== Key code excerpts
-#todo[Short commented pieces: collision check, nearby-peg lookup, encoder interrupt, DMA setup. Full listing in Appendix A.]
 
 // ============================================================
 = Results
