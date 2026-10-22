@@ -226,12 +226,14 @@ We measured success by the number of balls we could run while every frame still 
 ) <fig:final-product>
 
 == Speed
-#todo[Final max balls at 60 fps (see @tab:opt for how we got there). Physics / draw / frame time breakdown from the on-screen timers.]
+To hit 60 FPS, each frame would have be finished in 16.67 ms. We measured the time we spent in both the animation and physics loops. With all of our optimizations, we ended up being graphics bound. The physics thread would take 15ms to finish whereas our graphics thread was running for 16.6ms. 
 
 == Accuracy
 #todo[Screenshot of the board and histogram, compared to the ideal $B(16, 1/2)$. Sources of error (missed pegs, balls passing through pegs, spawn bias, fixed-point rounding).]
 
 Visually, the galton board seemed to be accurate and result in the expected Gaussian distribution. Although, we assume that using fixed point instead of floating point would likely have caused some rounding errors & loss in precision. 
+
+Our system followed a Gaussian distribution in most cases, but we noticed that if we changed our bounciness parameter, then we would see different distributions. Addiitonally, we also noticed that the two bins on either edge of the histogram were slightly higher than expected and we assumed that this was because of the edge condition we picked. We made all of the balls that hit the edge of the screen bounce back inwards which could have caused more balls to land in the edge bins.
 
 == Effect of settings
 As we increased ball radius, we decreased the maximum number of balls we could run at 60 fps. This was not only because the system spent more time drawing more pixels for each ball, but also because the larger balls had more frequent collisions with pegs and each other. This would lead to our physics thread running more often and taking longer to finish.
